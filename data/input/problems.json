@@ -1,0 +1,24 @@
+[
+    {
+        "number": "PRB1001",
+        "opened_at": "2025-09-01",
+        "closed_at": "2025-09-10",
+        "short_description": "Root Cause Analysis for SAP Outage",
+        "assignment_group": "SAP_Support",
+        "state": "Closed",
+        "root_cause": "Database Lock",
+        "problem_id": "PRB1001",
+        "u_ci_type": "Server"
+    },
+    {
+        "number": "PRB1002",
+        "opened_at": "2025-09-15",
+        "closed_at": "2025-09-20",
+        "short_description": "EDI Mapping Fix",
+        "assignment_group": "EDI_Support",
+        "state": "Closed",
+        "root_cause": "Bad Config",
+        "problem_id": "PRB1002",
+        "u_ci_type": "Application"
+    }
+]

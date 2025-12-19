@@ -1,0 +1,186 @@
+[
+    {
+        "number": "INC7538368",
+        "opened_at": "2025-12-15",
+        "short_description": "SAP manufacturing issue reported by plant",
+        "assignment_group": "SAP_MANUFACTURING",
+        "state": "Closed",
+        "close_notes": "User training provided"
+    },
+    {
+        "number": "INC7553362",
+        "opened_at": "2025-07-07",
+        "short_description": "New sold-to not integrating automatically",
+        "assignment_group": "EDI_Support",
+        "state": "Closed",
+        "close_notes": "Configuration updated"
+    },
+    {
+        "number": "INC7571523",
+        "opened_at": "2025-07-30",
+        "short_description": "Partner profile not available error for RSA",
+        "assignment_group": "EDI_SEEBURGER_Customer",
+        "state": "Closed",
+        "close_notes": "Profile reset"
+    },
+    {
+        "number": "INC7586735",
+        "opened_at": "2025-08-21",
+        "short_description": "GM EDI missing for morning shift",
+        "assignment_group": "EDI_GXS_Customer",
+        "state": "Closed",
+        "close_notes": "Resent data"
+    },
+    {
+        "number": "INC7595359",
+        "opened_at": "2025-12-16",
+        "short_description": "ASN errors for customer 113893 daily recurring",
+        "assignment_group": "EDI_SEEBURGER_Customer",
+        "state": "Closed",
+        "close_notes": "Permanent fix applied to mapping"
+    },
+    {
+        "number": "INC7599959",
+        "opened_at": "2025-09-10",
+        "short_description": "RSA Spain JIT call issues urgent production stop",
+        "assignment_group": "SAP_ORDER_FULFILLMENT",
+        "state": "Closed",
+        "close_notes": "Database lock cleared"
+    },
+    {
+        "number": "INC7601143",
+        "opened_at": "2025-09-11",
+        "short_description": "Kassel EDIs not integrating automatically",
+        "assignment_group": "EDI_Support",
+        "state": "Closed",
+        "close_notes": "Service restarted"
+    },
+    {
+        "number": "INC7602139",
+        "opened_at": "2025-09-12",
+        "short_description": "Renault JIT call visibility issues in SAP",
+        "assignment_group": "SAP_ORDER_FULFILLMENT",
+        "state": "Closed",
+        "close_notes": "GUI cache cleared"
+    },
+    {
+        "number": "INC7601724",
+        "opened_at": "2025-09-12",
+        "short_description": "Delivery creation errors for 110936",
+        "assignment_group": "SAP_ORDER_FULFILLMENT",
+        "state": "Closed",
+        "close_notes": "Manual delivery created"
+    },
+    {
+        "number": "INC7603687",
+        "opened_at": "2025-09-15",
+        "short_description": "ASN IDOC errors for customer 113893",
+        "assignment_group": "EDI_SEEBURGER_Customer",
+        "state": "Closed",
+        "close_notes": "Mapping adjusted"
+    },
+    {
+        "number": "INC7603602",
+        "opened_at": "2025-09-15",
+        "short_description": "ASN error 105713 port mapping issue detected",
+        "assignment_group": "EDI_SEEBURGER_Customer",
+        "state": "Closed",
+        "close_notes": "RO10 port mapping issue in SEEBURGER resolved"
+    },
+    {
+        "number": "INC7603556",
+        "opened_at": "2025-09-15",
+        "short_description": "SAP Operation Problems 122 ASN failure",
+        "assignment_group": "SAP_MANUFACTURING",
+        "state": "Closed",
+        "close_notes": "Data reprocessed"
+    },
+    {
+        "number": "INC7605853",
+        "opened_at": "2025-09-17",
+        "short_description": "EDI DAF error for customer 105713 again",
+        "assignment_group": "EDI_GXS_Customer",
+        "state": "Closed",
+        "close_notes": "Permanent fix applied (2nd attempt)"
+    },
+    {
+        "number": "INC7605376",
+        "opened_at": "2025-09-17",
+        "short_description": "Supplier ASD China cannot see EDI",
+        "assignment_group": "EDI_Support",
+        "state": "Closed",
+        "close_notes": "Output condition added"
+    },
+    {
+        "number": "INC7609695",
+        "opened_at": "2025-09-24",
+        "short_description": "EDI DAF error 105713 recurring failure",
+        "assignment_group": "EDI_SEEBURGER_Customer",
+        "state": "Closed",
+        "close_notes": "Permanent fix applied (3rd attempt)"
+    },
+    {
+        "number": "INC7614398",
+        "opened_at": "2025-10-01",
+        "short_description": "Sold-to from IDOC different from delivery",
+        "assignment_group": "SAP_ORDER_FULFILLMENT",
+        "state": "Closed",
+        "close_notes": "Master data corrected"
+    },
+    {
+        "number": "INC7620484",
+        "opened_at": "2025-10-09",
+        "short_description": "AUDI ASN not visible customer 102913",
+        "assignment_group": "EDI_SEEBURGER_Customer",
+        "state": "Closed",
+        "close_notes": "Advice given to user"
+    },
+    {
+        "number": "INC7635354",
+        "opened_at": "2025-10-29",
+        "short_description": "OPEL cannot see ASN configuration error",
+        "assignment_group": "SAP_ORDER_FULFILLMENT",
+        "state": "Closed",
+        "close_notes": "Fixed configuration error"
+    },
+    {
+        "number": "INC7654423",
+        "opened_at": "2025-11-18",
+        "short_description": "GM ASN incorrect segments",
+        "assignment_group": "EDI_GXS_Customer",
+        "state": "Closed",
+        "close_notes": "Segments updated"
+    },
+    {
+        "number": "INC7654364",
+        "opened_at": "2025-11-18",
+        "short_description": "AUDI ASN not visible customer 102913 repeat",
+        "assignment_group": "EDI_SEEBURGER_Customer",
+        "state": "Closed",
+        "close_notes": "Resent ASN"
+    },
+    {
+        "number": "INC7654321",
+        "opened_at": "2025-11-18",
+        "short_description": "Cannot see open orders in VL10",
+        "assignment_group": "SAP_ORDER_FULFILLMENT",
+        "state": "Closed",
+        "close_notes": "Transaction code issue resolved"
+    },
+    {
+        "number": "INC7683121",
+        "opened_at": "2025-12-10",
+        "short_description": "CEVA MAF Missing ASN pallets blocked",
+        "assignment_group": "EDI_SEEBURGER_Customer",
+        "state": "New",
+        "close_notes": "Investigating"
+    },
+    {
+        "number": "INC7684078",
+        "opened_at": "2025-12-11",
+        "short_description": "AUDI ASN not visible 4th occurrence 102913",
+        "assignment_group": "EDI_SEEBURGER_Customer",
+        "state": "New",
+        "close_notes": "Escalated to L2"
+    }
+]

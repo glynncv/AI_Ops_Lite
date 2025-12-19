@@ -1,0 +1,48 @@
+[
+    {
+        "number": "CHG0030001",
+        "short_description": "SAP System Kernel Patch Upgrade",
+        "closed_at": "2025-12-14 23:00:00",
+        "state": "Closed"
+    },
+    {
+        "number": "CHG0030002",
+        "short_description": "Network Firewall Rules Update for EDI",
+        "closed_at": "2025-12-15 14:00:00",
+        "state": "Closed"
+    },
+    {
+        "number": "CHG0030003",
+        "short_description": "Database Maintenance for RSA",
+        "closed_at": "2025-12-16 10:00:00",
+        "state": "Closed"
+    },
+    {
+        "number": "CHG0030004",
+        "short_description": "ASN Mapping Configuration Change",
+        "closed_at": "2025-12-16 18:30:00",
+        "state": "Closed"
+    },
+    {
+        "number": "CHG0030005",
+        "short_description": "Irrelevant Change for Printer Config",
+        "closed_at": "2025-06-19 12:00:00",
+        "state": "Closed"
+    },
+    {
+        "number": "CHG0030006",
+        "short_description": "Core Switch Firmware Update",
+        "closed_at": "2025-12-10 09:00:00",
+        "state": "Closed",
+        "description": "Updating core switch firmware to fix security vulnerability.",
+        "close_code": "Successful"
+    },
+    {
+        "number": "CHG0030007",
+        "short_description": "HR Portal API Gateway Config",
+        "closed_at": "2025-12-14 15:30:00",
+        "state": "Closed",
+        "description": "Adjusting API rate limits for HR portal.",
+        "close_code": "Successful"
+    }
+]
