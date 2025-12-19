@@ -2,7 +2,12 @@ import streamlit as st
 import pandas as pd
 import json
 import os
+import snow_connector
+from dotenv import load_dotenv
 from data_processor import process_snow_data, fetch_changes
+
+# Load Environment Variables
+load_dotenv()
 # Updated imports including new attributes
 from analysis import (
     perform_clustering, 
@@ -23,7 +28,7 @@ def main():
     
     # Sidebar Configuration
     st.sidebar.title("Data Source Config")
-    data_mode = st.sidebar.selectbox("Select Data Source", ["Live API (Mock)", "Offline Data"])
+    data_mode = st.sidebar.selectbox("Select Data Source", ["Live API (Mock)", "Live API (Real)", "Offline Data"])
 
     st.sidebar.markdown("---")
     # Flash Report Trigger
@@ -83,6 +88,82 @@ def main():
         except Exception as e:
              # It's okay if file doesn't exist, just don't crash
              pass
+
+    elif data_mode == 'Live API (Real)':
+        st.sidebar.info("Mode: Live ServiceNow API")
+        
+        # Credentials Input
+        with st.sidebar.expander("ServiceNow Credentials", expanded=False):
+            default_url = os.getenv("SNOW_INSTANCE_URL", "https://phinia.service-now.com/")
+            default_user = os.getenv("SNOW_USERNAME", "")
+            default_pass = os.getenv("SNOW_PASSWORD", "")
+            
+            instance_url = st.text_input("Instance URL", default_url)
+            username = st.text_input("Username", default_user)
+            password = st.text_input("Password", default_pass, type="password")
+            
+            connect_btn = st.button("Reconnect / Fetch Manually")
+
+        # Auto-connect logic: If env vars exist and we haven't loaded real data yet, or if button is clicked
+        should_connect = False
+        
+        # Check if we have credentials (either from env default or manual input)
+        has_creds = instance_url and username and password
+        
+        # Check if we need to auto-connect (first run in this mode)
+        # We use a session state flag to track if we've tried auto-connecting to avoid loops or spam
+        if 'auto_connected' not in st.session_state:
+            st.session_state['auto_connected'] = False
+            
+        if has_creds and not st.session_state['auto_connected']:
+             should_connect = True
+        
+        if connect_btn and has_creds:
+             should_connect = True
+
+        if should_connect:
+            try:
+                with st.spinner("Auto-Connecting to ServiceNow..."):
+                    client = snow_connector.ServiceNowClient(instance_url, username, password)
+                    
+                    # 1. Incidents
+                    inc_data = snow_connector.get_snow_data('incident', client)
+                    if inc_data:
+                        process_snow_data(inc_data) # Just verifying processing
+                        st.sidebar.success(f"Fetched {len(inc_data)} Incidents")
+                        st.session_state['inc_df'] = process_snow_data(inc_data)
+                    
+                    # 2. Problems
+                    prb_data = snow_connector.get_snow_data('problem', client)
+                    if prb_data:
+                        problems_df = pd.DataFrame(prb_data)
+                        # Normalize dates
+                        for col in ['opened_at', 'closed_at']:
+                            if col in problems_df.columns:
+                                problems_df[col] = pd.to_datetime(problems_df[col], errors='coerce')
+                        st.session_state['prb_df'] = problems_df
+                        st.sidebar.success(f"Fetched {len(problems_df)} Problems")
+
+                    # 3. Changes
+                    chg_data = snow_connector.get_snow_data('change_request', client)
+                    if chg_data:
+                        changes_df = pd.DataFrame(chg_data)
+                        # Normalize dates
+                        if 'closed_at' in changes_df.columns:
+                            changes_df['closed_at'] = pd.to_datetime(changes_df['closed_at'], errors='coerce')
+                        st.session_state['chg_df'] = changes_df
+                        st.sidebar.success(f"Fetched {len(changes_df)} Changes")
+                    
+                    st.session_state['data_loaded'] = True
+                    st.session_state['auto_connected'] = True
+                    st.session_state['data_mode'] = 'real'
+                    
+                    # Rerun to update main view
+                    st.rerun()
+
+            except Exception as e:
+                st.sidebar.error(f"Connection Failed: {e}")
+                st.session_state['auto_connected'] = True # Stop trying if failed
 
     elif data_mode == 'Offline Data':
         st.sidebar.info("Mode: Offline Data (CSV)")
