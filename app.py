@@ -50,6 +50,14 @@ def main():
     changes_df = pd.DataFrame()
     problems_df = pd.DataFrame()
 
+    # Check Session State for Data Persistence
+    if 'inc_df' in st.session_state:
+        df_cleaned = st.session_state['inc_df']
+    if 'prb_df' in st.session_state:
+        problems_df = st.session_state['prb_df']
+    if 'chg_df' in st.session_state:
+        changes_df = st.session_state['chg_df']
+
     # --- Phase 1: Data Loading (Common) ---
     st.sidebar.header("Status")
     
@@ -99,17 +107,12 @@ def main():
     elif data_mode == 'Live API (Real)':
         st.sidebar.info("Mode: Live ServiceNow API")
         
-        # Credentials Input
-        with st.sidebar.expander("ServiceNow Credentials", expanded=False):
-            default_url = os.getenv("SNOW_INSTANCE_URL", "https://phinia.service-now.com/")
-            default_user = os.getenv("SNOW_USERNAME", "")
-            default_pass = os.getenv("SNOW_PASSWORD", "")
-            
-            instance_url = st.text_input("Instance URL", default_url)
-            username = st.text_input("Username", default_user)
-            password = st.text_input("Password", default_pass, type="password")
-            
-            connect_btn = st.button("Reconnect / Fetch Manually")
+        # Credentials from Environment Variables (UI Removed for Security)
+        instance_url = os.getenv("SNOW_INSTANCE_URL", "https://phinia.service-now.com/")
+        username = os.getenv("SNOW_USERNAME", "")
+        password = os.getenv("SNOW_PASSWORD", "")
+        
+        connect_btn = st.sidebar.button("Reconnect / Fetch Manually")
 
         # Auto-connect logic: If env vars exist and we haven't loaded real data yet, or if button is clicked
         should_connect = False
