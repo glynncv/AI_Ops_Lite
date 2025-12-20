@@ -194,7 +194,7 @@ def main():
              st.sidebar.success(f"Loaded {len(changes_df)} Changes")
 
     # --- Tabs Layout ---
-    tab_risks, tab_dive, tab_intelligence = st.tabs(["🔴 Current Risks", "🔍 Investigation Deck", "🧠 AI Intelligence"])
+    tab_risks, tab_dive, tab_intelligence, tab_monitoring = st.tabs(["🔴 Current Risks", "🔍 Investigation Deck", "🧠 AI Intelligence", "📊 Monitoring & ROI"])
 
     # ==========================
     # TAB 1: Current Risks
@@ -515,6 +515,189 @@ Keywords: {', '.join(suggestion['top_keywords'])}
                         st.error("Clustering failed. Please check your data.")
         else:
             st.warning("No incident data loaded.")
+
+    # ==========================
+    # TAB 4: Monitoring & ROI
+    # ==========================
+    with tab_monitoring:
+        st.header("📊 Platform Monitoring & ROI Tracking")
+        st.info("Real-time visibility into AIOps platform performance, usage, and business value")
+
+        try:
+            from log_analyzer import LogAnalyzer
+
+            analyzer = LogAnalyzer()
+            analyzer.load_logs(days_back=7)
+
+            # ROI Summary Section
+            st.subheader("💰 ROI Summary (Last 7 Days)")
+
+            roi_summary = analyzer.get_roi_summary()
+
+            if roi_summary['incidents_analyzed'] > 0:
+                col1, col2, col3, col4 = st.columns(4)
+
+                col1.metric("Incidents Analyzed", roi_summary['incidents_analyzed'])
+                col2.metric("Patterns Detected", roi_summary['patterns_detected'])
+                col3.metric("Time Saved", f"{roi_summary['time_saved_hours']:.1f}h")
+                col4.metric("Cost Saved", f"${roi_summary['cost_saved_usd']:.0f}")
+
+                col5, col6, col7 = st.columns(3)
+                col5.metric("ML Predictions", roi_summary['ml_predictions'])
+                col6.metric("ML Acceptance Rate", f"{roi_summary['ml_acceptance_rate']:.0%}")
+                col7.metric("Deflectable Tickets", roi_summary['deflectable_tickets'])
+
+                # Projected Annual Savings
+                weekly_savings = roi_summary['cost_saved_usd']
+                annual_projection = weekly_savings * 52
+
+                st.info(f"💡 **Projected Annual Value:** ${annual_projection:,.0f} based on current 7-day performance")
+
+                # Detailed Metrics
+                with st.expander("📈 Detailed Metrics Breakdown"):
+                    metrics_df = pd.DataFrame([{
+                        'Metric': 'Incidents Analyzed',
+                        'Value': roi_summary['incidents_analyzed'],
+                        'Rate': f"{roi_summary.get('pattern_detection_rate', 0):.1%} pattern rate"
+                    }, {
+                        'Metric': 'ML Predictions Made',
+                        'Value': roi_summary['ml_predictions'],
+                        'Rate': f"{roi_summary['ml_acceptance_rate']:.1%} accepted"
+                    }, {
+                        'Metric': 'Deflection Opportunities',
+                        'Value': roi_summary['deflectable_tickets'],
+                        'Rate': f"{roi_summary.get('deflection_rate', 0):.1%} of total"
+                    }])
+                    st.dataframe(metrics_df, use_container_width=True)
+
+            else:
+                st.warning("No metrics data available yet. Metrics will appear as you use the system.")
+
+            st.divider()
+
+            # ML Model Performance
+            st.subheader("🤖 ML Model Performance")
+
+            ml_accuracy = analyzer.get_ml_accuracy_by_feature()
+
+            if ml_accuracy:
+                for feature, stats in ml_accuracy.items():
+                    with st.expander(f"📊 {feature.replace('_', ' ').title()} - {stats['acceptance_rate']:.0%} Acceptance Rate"):
+                        col1, col2, col3, col4 = st.columns(4)
+                        col1.metric("Total Predictions", stats['total'])
+                        col2.metric("Accepted", stats['accepted'])
+                        col3.metric("Rejected", stats['rejected'])
+                        col4.metric("Modified", stats.get('modified', 0))
+
+                        # Progress bar showing acceptance
+                        st.progress(stats['acceptance_rate'])
+                        st.caption(f"Acceptance Rate: {stats['acceptance_rate']:.1%}")
+
+            else:
+                st.info("No ML prediction data yet. Data will appear as you use AI Intelligence features.")
+
+            st.divider()
+
+            # Performance Stats
+            st.subheader("⚡ System Performance")
+
+            perf_stats = analyzer.get_performance_stats()
+
+            if perf_stats:
+                perf_df = pd.DataFrame([
+                    {
+                        'Function': func.replace('_', ' ').title(),
+                        'Calls': stats['count'],
+                        'Avg (ms)': stats['avg_ms'],
+                        'P50 (ms)': stats['p50_ms'],
+                        'P95 (ms)': stats['p95_ms'],
+                        'Max (ms)': stats['max_ms']
+                    }
+                    for func, stats in perf_stats.items()
+                ])
+
+                st.dataframe(perf_df, use_container_width=True)
+
+                # Highlight slow functions
+                slow_functions = perf_df[perf_df['Avg (ms)'] > 1000]
+                if not slow_functions.empty:
+                    st.warning(f"⚠️ {len(slow_functions)} function(s) averaging >1s response time")
+
+            else:
+                st.info("No performance data yet. Performance metrics will be tracked automatically.")
+
+            st.divider()
+
+            # Error Tracking
+            st.subheader("🚨 Error Tracking")
+
+            error_summary = analyzer.get_error_summary()
+
+            if error_summary['total_errors'] > 0:
+                col1, col2 = st.columns(2)
+                col1.metric("Total Errors", error_summary['total_errors'])
+                col2.metric("Unique Error Types", error_summary['unique_errors'])
+
+                if error_summary['top_errors']:
+                    st.write("**Top Errors:**")
+                    for error in error_summary['top_errors'][:5]:
+                        with st.expander(f"❌ {error['error']} ({error['count']} occurrences)"):
+                            st.write(f"**Count:** {error['count']}")
+                            st.write(f"**Last Seen:** {error['last_seen']}")
+                            st.write(f"**Severity:** {error['severity']}")
+
+                if error_summary['total_errors'] > 10:
+                    st.error("⚠️ High error rate detected. Review logs for details.")
+            else:
+                st.success("✅ No errors logged in the last 7 days")
+
+            st.divider()
+
+            # User Activity
+            st.subheader("👥 User Activity")
+
+            user_activity = analyzer.get_user_activity()
+
+            if user_activity:
+                activity_df = pd.DataFrame([
+                    {'User': user, 'Actions': count}
+                    for user, count in list(user_activity.items())[:10]
+                ])
+                st.dataframe(activity_df, use_container_width=True)
+            else:
+                st.info("No user activity logged yet.")
+
+            st.divider()
+
+            # Audit Trail
+            st.subheader("📋 Recent Audit Trail")
+
+            audit_trail = analyzer.get_audit_trail(limit=20)
+
+            if audit_trail:
+                audit_df = pd.DataFrame([
+                    {
+                        'Timestamp': entry['timestamp'],
+                        'Event': entry['event_type'],
+                        'User': entry.get('user', 'system'),
+                        'Details': str(entry.get('setting', entry.get('model_type', entry.get('data_type', 'N/A'))))
+                    }
+                    for entry in audit_trail
+                ])
+                st.dataframe(audit_df, use_container_width=True)
+            else:
+                st.info("No audit events logged yet.")
+
+            # Export Report
+            st.divider()
+            if st.button("📥 Export Full Monitoring Report (JSON)"):
+                report = analyzer.export_summary_report()
+                st.json(report)
+
+        except ImportError:
+            st.error("Logging module not available. Install dependencies or check configuration.")
+        except Exception as e:
+            st.error(f"Error loading monitoring data: {e}")
 
     # Flash Report Overlay
     if st.session_state.get('show_flash_report'):

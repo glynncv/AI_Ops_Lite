@@ -18,11 +18,24 @@ from sklearn.ensemble import RandomForestClassifier
 from collections import Counter
 import re
 
+# Import logging infrastructure
+try:
+    from aiops_logging import track_performance, business_logger, audit_logger, track_roi
+    LOGGING_ENABLED = True
+except ImportError:
+    LOGGING_ENABLED = False
+    # Create no-op decorators if logging not available
+    def track_performance(name=None):
+        def decorator(func):
+            return func
+        return decorator
+
 
 # ============================================================================
 # 1. SIMILAR INCIDENT RECOMMENDATION
 # ============================================================================
 
+@track_performance('find_similar_incidents')
 def find_similar_resolved_incidents(new_incident_desc, historical_df, top_n=3):
     """
     Find similar resolved incidents from historical data using TF-IDF and cosine similarity.
@@ -183,7 +196,7 @@ class IntelligentRouter:
         # Get assignment group distribution
         group_counts = y.value_counts().to_dict()
 
-        return {
+        metrics = {
             'success': True,
             'training_accuracy': float(train_accuracy),
             'num_training_samples': len(train_df),
@@ -191,6 +204,18 @@ class IntelligentRouter:
             'assignment_groups': group_counts
         }
 
+        # Log training event
+        if LOGGING_ENABLED:
+            audit_logger.log_model_training(
+                model_type='IntelligentRouter',
+                training_samples=len(train_df),
+                accuracy=train_accuracy,
+                hyperparameters={'n_estimators': 100, 'max_features': 300}
+            )
+
+        return metrics
+
+    @track_performance('intelligent_router_predict')
     def predict_assignment(self, incident_description, top_n=3):
         """
         Predict the best assignment group for a new incident.
@@ -245,6 +270,7 @@ class IntelligentRouter:
 # 3. AUTO-PROBLEM CREATION SUGGESTIONS
 # ============================================================================
 
+@track_performance('suggest_problem_creation')
 def suggest_problem_creation(cluster_df, cluster_id, threshold=5):
     """
     Suggest creating a Problem Record when incident clusters reach critical mass.
@@ -345,6 +371,7 @@ def suggest_problem_creation(cluster_df, cluster_id, threshold=5):
     }
 
 
+@track_performance('batch_suggest_problems')
 def batch_suggest_problems(cluster_df, threshold=5):
     """
     Analyze all clusters and suggest which ones warrant Problem Record creation.
