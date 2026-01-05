@@ -12,7 +12,6 @@ load_dotenv()
 from analysis import (
     perform_clustering, 
     check_historical_recursion, 
-    check_historical_recursion, 
     find_suspect_changes,
     detect_volume_spike, 
     cluster_open_incidents, 
@@ -20,7 +19,7 @@ from analysis import (
 )
 from utils import generate_communication_template
 from data_loader import DataLoader
-from retro_analysis import create_timeline_fusion_chart, identify_zombie_problems, calculate_deflection_opportunity
+
 from aiops_intelligence import (
     find_similar_resolved_incidents,
     IntelligentRouter,
@@ -232,7 +231,7 @@ def main():
                     valid_clusters = open_clusters[open_clusters['Cluster_ID'] != -1]
                     if not valid_clusters.empty:
                          cluster_counts = valid_clusters['Cluster_ID'].value_counts()
-                         st.dataframe(cluster_counts, height=150)
+                         st.dataframe(cluster_counts.reset_index().rename(columns={'index': 'Cluster ID', 'Cluster_ID': 'Count'}), height=150, hide_index=True)
                          st.warning(f"{len(valid_clusters)} open incidents in {len(cluster_counts)} clusters.")
                     else:
                          st.success("No clustered open incidents.")
@@ -262,7 +261,9 @@ def main():
              valid = open_clusters[open_clusters['Cluster_ID'] != -1]
              if not valid.empty:
                  st.subheader("Active Clusters Detail")
-                 st.dataframe(valid[['Cluster_ID', 'number', 'short_description', 'assignment_group', 'state']])
+                 display_valid = valid[['Cluster_ID', 'number', 'short_description', 'assignment_group', 'state']]
+                 display_valid.columns = ['Cluster ID', 'Incident Number', 'Short Description', 'Assignment Group', 'State']
+                 st.dataframe(display_valid, hide_index=True)
 
     # ==========================
     # TAB 2: Investigation Deck (Deep Dive)
@@ -279,7 +280,9 @@ def main():
                         clustered = df_all_clustered[df_all_clustered['Cluster_ID'] != -1]
                         if not clustered.empty:
                             st.warning('⚠️ Potential Duplicate Patterns (All Time)')
-                            st.dataframe(clustered[['Cluster_ID', 'number', 'short_description']].sort_values('Cluster_ID'))
+                            display_cls = clustered[['Cluster_ID', 'number', 'short_description']].sort_values('Cluster_ID')
+                            display_cls.columns = ['Cluster ID', 'Incident Number', 'Short Description']
+                            st.dataframe(display_cls, hide_index=True)
                         else:
                             st.success("No patterns in full history.")
                 except Exception as e:
@@ -292,7 +295,7 @@ def main():
                     repeat_offenders = check_historical_recursion(df_cleaned)
                     if repeat_offenders:
                         st.warning("🔥 Recurring Assets/Entities Detected")
-                        st.table(pd.DataFrame(repeat_offenders))
+                        st.dataframe(pd.DataFrame(repeat_offenders), hide_index=True)
                     else:
                         st.success("No recurring entities detected.")
                 except Exception as e:
@@ -312,8 +315,9 @@ def main():
                         st.warning(f"Found {len(suspects)} incidents with potential change correlations.")
                         # Format for display
                         display = suspects[['number', 'short_description', 'suspect_root_cause']].copy()
-                        display['suspect_root_cause'] = display['suspect_root_cause'].apply(lambda x: str(x))
-                        st.dataframe(display)
+                        display['suspect_root_cause'] = display['suspect_root_cause'].apply(lambda x: ", ".join(x))
+                        display.columns = ['Incident Number', 'Short Description', 'Suspect Root Cause']
+                        st.dataframe(display, hide_index=True)
                     else:
                         st.success("No row-wise correlations found.")
                 except Exception as e:
@@ -568,7 +572,7 @@ Keywords: {', '.join(suggestion['top_keywords'])}
                         'Value': roi_summary['deflectable_tickets'],
                         'Rate': f"{roi_summary.get('deflection_rate', 0):.1%} of total"
                     }])
-                    st.dataframe(metrics_df, use_container_width=True)
+                    st.dataframe(metrics_df, use_container_width=True, hide_index=True)
 
             else:
                 st.warning("No metrics data available yet. Metrics will appear as you use the system.")
@@ -616,7 +620,7 @@ Keywords: {', '.join(suggestion['top_keywords'])}
                     for func, stats in perf_stats.items()
                 ])
 
-                st.dataframe(perf_df, use_container_width=True)
+                st.dataframe(perf_df, use_container_width=True, hide_index=True)
 
                 # Highlight slow functions
                 slow_functions = perf_df[perf_df['Avg (ms)'] > 1000]
@@ -663,7 +667,7 @@ Keywords: {', '.join(suggestion['top_keywords'])}
                     {'User': user, 'Actions': count}
                     for user, count in list(user_activity.items())[:10]
                 ])
-                st.dataframe(activity_df, use_container_width=True)
+                st.dataframe(activity_df, use_container_width=True, hide_index=True)
             else:
                 st.info("No user activity logged yet.")
 
@@ -684,7 +688,7 @@ Keywords: {', '.join(suggestion['top_keywords'])}
                     }
                     for entry in audit_trail
                 ])
-                st.dataframe(audit_df, use_container_width=True)
+                st.dataframe(audit_df, use_container_width=True, hide_index=True)
             else:
                 st.info("No audit events logged yet.")
 
@@ -698,6 +702,8 @@ Keywords: {', '.join(suggestion['top_keywords'])}
             st.error("Logging module not available. Install dependencies or check configuration.")
         except Exception as e:
             st.error(f"Error loading monitoring data: {e}")
+
+
 
     # Flash Report Overlay
     if st.session_state.get('show_flash_report'):
@@ -746,51 +752,7 @@ Deflection Potential: {deflect_val} tickets
             # 4. Display this in a st.code block
             st.code(template, language='text')
 
-    # --- Phase 5: Retro Audit (Back to the Future) ---
-    st.header("Phase 5: Retro Audit (Back to the Future)")
-    
-    tab_audit, tab_zombies, tab_deflection = st.tabs(["The Timeline Fusion", "Zombie Problems", "Deflection Opportunity"])
-    
-    with tab_audit:
-        st.subheader("The Timeline Fusion")
-        st.write("Visualizing the relationship between Incidents (Blue) and Problem Records (Red).")
-        
-        if not df_cleaned.empty and not problems_df.empty:
-            fig = create_timeline_fusion_chart(df_cleaned, problems_df)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Insufficient data for Timeline Fusion. Ensure both Incidents and Problems are loaded.")
 
-    with tab_zombies:
-        st.subheader("Recursion Table: Zombie Problems")
-        st.write("Entities with >1 Problem Record in the last 12 months.")
-        
-        if not problems_df.empty:
-            zombies = identify_zombie_problems(problems_df)
-            if not zombies.empty:
-                st.warning(f"Found {len(zombies)} Zombie Entities!")
-                st.dataframe(zombies, use_container_width=True)
-            else:
-                st.success("No Zombie Problems detected (Entities with multiple Problem records).")
-        else:
-            st.warning("No Problem data loaded.")
-            
-    with tab_deflection:
-        st.subheader("Deflection Opportunity")
-        st.write("Potential cost savings from automating keyword-matched incidents.")
-        
-        if not df_cleaned.empty:
-            deflect_count, savings, deflect_df = calculate_deflection_opportunity(df_cleaned)
-            
-            col1, col2 = st.columns(2)
-            col1.metric("Deflectable Tickets", deflect_count)
-            col2.metric("Potential Savings", f"${savings:,}")
-            
-            if not deflect_df.empty:
-                with st.expander("View Deflectable Candidates"):
-                    st.dataframe(deflect_df)
-        else:
-            st.warning("No Incident data loaded.")
 
 if __name__ == "__main__":
     main()

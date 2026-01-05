@@ -1,15 +1,17 @@
-import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
 from collections import defaultdict
 import re
 
-def create_timeline_fusion_chart(incidents_df, problems_df):
+def create_timeline_fusion_chart(incidents_df, problems_df, site_name=None):
     """
     Creates a Plotly Scatter plot combining Incidents (Blue Dots) and Problems (Red Lines).
-    X-Axis: Time
-    Trace 1: Incidents (Blue Dots)
-    Trace 2: Problems (Red Lines - Start to End)
+    If a site_name is provided, logic assumes dfs are already filtered or we filter here.
+    Ideally, filtering happens before calling this to keep plotting pure, 
+    but for the title/context, site_name is useful.
+    
+    Trace 1 (Blue Dots): Incidents (opened_at vs number).
+    Trace 2 (Red Lines): Problem Records (opened_at to closed_at).
     """
     fig = go.Figure()
 
@@ -18,13 +20,16 @@ def create_timeline_fusion_chart(incidents_df, problems_df):
         # Filter for valid dates
         incs = incidents_df.dropna(subset=['opened_at']).copy()
         
+        # Sort by opened_at for better plotting behavior
+        incs = incs.sort_values('opened_at')
+        
         fig.add_trace(go.Scatter(
             x=incs['opened_at'],
-            y=incs['number'], # Or some arbitrary Y, or categorical Y (like Assignment Group)
+            y=incs['number'], 
             mode='markers',
             name='Incidents',
-            marker=dict(color='blue', size=8, opacity=0.7),
-            text=incs['short_description'], # Hover text
+            marker=dict(color='#1E88E5', size=10, opacity=0.8), # Material Blue
+            text=incs['short_description'],
             hovertemplate="<b>%{y}</b><br>%{x}<br>%{text}<extra></extra>"
         ))
     
@@ -34,141 +39,154 @@ def create_timeline_fusion_chart(incidents_df, problems_df):
         probs = problems_df.dropna(subset=['opened_at', 'closed_at']).copy()
         
         for idx, row in probs.iterrows():
-            # For each problem, draw a line from start to end
-            # We need a Y value. To visualize "fusion", we might want them on the same axis.
-            # If Y is just category, it's hard to overlay lines.
-            # OPTION: Use a constant Y or random Y, or try to match grouping.
-            # For this 'Retro' view, usually time is X, and Y is just 'Entity' or just stacked.
-            # Let's try plotting them on a separate 'y-axis' space or just overlaying them arbitrarily
-            # if we use 'number' on Y-axis for incidents, it's categorical.
-            
-            # IMPROVEMENT: Let's just use a clear visual like 'y=1' for Incidents and 'y=2' for Problems?
-            # Or better: "The Timeline Fusion" implies seeing them together.
-            # Let's use 'Assignment Group' as Y axis? 
-            # If too many groups, maybe just use a simple linear progression or just categorical 'y'.
-            
-            # Let's try categorical Y = "Problem Records" vs "Incidents" is too simple.
-            # Let's stick to using 'Assignment Group' if available, else just simple ID indices.
-            
-            # COMPROMISE for simple visual:
-            # Map Y to a categorical value (e.g. 'All Events') or just use the IDs (if they are messy, logic breaks).
-            # Let's try to map them to 'Assignment Group' if shared?
-            
-            y_val = row.get('assignment_group', 'Unknown Group')
+            prb_num = row.get('number', f'PRB_{idx}')
             
             fig.add_trace(go.Scatter(
                 x=[row['opened_at'], row['closed_at']],
-                y=[y_val, y_val],
+                y=[prb_num, prb_num],
                 mode='lines+markers',
-                name=f"Prob: {row.get('number', 'Unknown')}",
-                line=dict(color='red', width=3),
-                marker=dict(color='red', size=6),
-                showlegend=False, # Too many legends
-                hoverinfo='text',
-                text=f"{row.get('number', 'N/A')}: {row.get('short_description', '')}"
+                name=f"Fixed: {prb_num}",
+                line=dict(color='#D32F2F', width=4), # Material Red
+                marker=dict(color='#D32F2F', size=8, symbol='square'),
+                text=f"{prb_num}: {row.get('short_description', '')}",
+                hovertemplate="<b>%{text}</b><br>Start: %{x}<extra></extra>"
             ))
             
+    title_text = "The 'Groundhog Day' Analysis: Failed Fixes"
+    if site_name:
+        title_text += f" - Site: {site_name}"
+
     fig.update_layout(
-        title="The Timeline Fusion: Incidents (Blue) vs Problems (Red)",
-        xaxis_title="Time",
-        yaxis_title="Assignment Group / Category",
+        title=title_text,
+        xaxis_title="Timeline",
+        yaxis_title="Record ID",
         height=600,
-        showlegend=True
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        template="plotly_white",
+        hovermode="closest"
     )
     
     return fig
 
 def identify_zombie_problems(problems_df):
     """
-    Identifies 'Zombie Problems': Entities that have >1 Problem Record in 12 months.
-    Groups by location or cmdb_ci if available, otherwise heuristics from description.
+    Identifies 'Zombie Problems': Recurring PRBs per site.
+    Groups by 'location' (or 'location.name').
+    Counts number of PRBs per site.
+    Returns Sites with >1 Problem Record.
     """
-    zombies = []
-    
     if problems_df.empty:
-        return zombies
-        
-    # Heuristic: Check for duplicate Entity IDs in short_description (similar to Recursion Check for Incidents)
-    # Re-use logic or implement specific 'Problem' logic.
-    # The prompt says: "Group by location or cmdb_ci. List Entities that have >1 Problem Record in 12 months."
+        return pd.DataFrame()
     
-    # 1. Group by CMDB_CI / Location if available
-    # Check columns
-    groupable_cols = []
-    if 'u_ci_type' in problems_df.columns: # Found in file preview
-        groupable_cols.append('u_ci_type') 
-    if 'location' in problems_df.columns:
-        groupable_cols.append('location')
-        
-    # If explicit columns exist, use them. Else falls back to text extraction.
+    # Normalized location column
+    # Check for likely location columns
+    loc_col = None
+    cols = [c.lower() for c in problems_df.columns]
     
-    # We will use a hybrid approach:
-    # A. Count duplicates in 'location'
     if 'location' in problems_df.columns:
-        loc_counts = problems_df['location'].value_counts()
-        for loc, count in loc_counts.items():
-            if count > 1 and loc: # Ignore empty
-                # Get details
-                subset = problems_df[problems_df['location'] == loc]
-                zombies.append({
-                    'Type': 'Location',
-                    'Entity': loc,
-                    'Count': count,
-                    'Records': ", ".join(subset['number'].unique())
-                })
+        loc_col = 'location'
+    elif 'location.name' in problems_df.columns:
+        loc_col = 'location.name'
+    elif 'u_location' in problems_df.columns:
+        loc_col = 'u_location'
+        
+    if not loc_col:
+        return pd.DataFrame()
+        
+    # Group by Location
+    # Filter out empty locations
+    df_clean = problems_df[problems_df[loc_col].astype(str) != ''].copy()
+    
+    if df_clean.empty:
+         return pd.DataFrame()
+
+    stats = df_clean.groupby(loc_col).agg(
+        Problem_Count=('number', 'nunique'),
+        Problem_Records=('number', lambda x: ", ".join(x.unique()))
+    ).reset_index()
+    
+    # Filter for > 1
+    zombies = stats[stats['Problem_Count'] > 1].sort_values('Problem_Count', ascending=False)
+    
+    # Attempt to extract a cleaner 'Site Name'
+    # The format might be "00274 - Gillingham - United Kingdom" OR just "10610" if data is dirty.
+    # Goal: Remove leading digits and separators to find the Name.
+    def extract_site_name(loc_str):
+        s = str(loc_str).strip()
+        # Regex: Replace leading (Digits + Spaces + Dashes) with empty string
+        # e.g. "00274 - Gillingham" -> "Gillingham"
+        # e.g. "10610" -> "10610" (No change if no letters found, to be safe?)
+        
+        # If we just strip leading non-letters?
+        # "00274 - Gillingham" -> "Gillingham..."
+        
+        import re
+        # Match pattern: Start of line, any digits, optional spaces/dashes
+        clean = re.sub(r'^[\d\s-]+', '', s)
+        
+        if clean:
+            # If we have a result, use it.
+            # Only issue: "United Kingdom" might remain if it was "ID - Country". 
+            # But usually it is "ID - Name - Country".
+            # Let's try to just take the first part of the matcher if it was split by ' - '?
+            
+            # Let's keep existing split logic as primary but refine it
+            parts = s.split(' - ')
+            if len(parts) >= 2:
+                # 00274 - Gillingham - UK
+                # parts[0] = 00274
+                # parts[1] = Gillingham
+                return parts[1]
                 
-    # B. Text Extraction from Description for 'Entity'
-    # Reuse extraction logic?
-    # Let's copy simple regex logic here to avoid circular imports or complex refactors right now.
+        # Fallback: if split didn't work, maybe it was "10610 Gillingham"?
+        # Try the regex removal of leading numbers
+        clean_fallback = re.sub(r'^[\d\s-]+', '', s)
+        if clean_fallback and clean_fallback != s:
+             return clean_fallback
+             
+        return s
+        
+    if not zombies.empty:
+        zombies['Site'] = zombies[loc_col].apply(extract_site_name)
+        # Drop the original redundant ID/Location column
+        # Keep Site, Problem_Count, Problem_Records
+        zombies = zombies[['Site', 'Problem_Count', 'Problem_Records']]
     
-    entity_map = defaultdict(list)
-    
-    for idx, row in problems_df.iterrows():
-        desc = str(row.get('short_description', ''))
-        num = row.get('number', 'UNK')
-        
-        # Regex for Asset-like things (e.g. "Server01", "10.0.0.1")
-        # Reuse patterns
-        ip_pattern = r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
-        server_pattern = r'\b(?=.*\d)(?=.*[a-zA-Z])[a-zA-Z0-9-]{3,}\b'
-        
-        found = set(re.findall(ip_pattern, desc) + re.findall(server_pattern, desc))
-        
-        for ent in found:
-            entity_map[ent].append(num)
-            
-    for ent, nums in entity_map.items():
-        if len(set(nums)) > 1:
-             zombies.append({
-                'Type': 'Entity (Text)',
-                'Entity': ent,
-                'Count': len(set(nums)),
-                'Records': ", ".join(sorted(list(set(nums))))
-            })
-            
-    return pd.DataFrame(zombies)
+    return zombies
 
 def calculate_deflection_opportunity(incidents_df):
     """
-    Filter Incidents by keywords ('password', 'reset', 'access').
-    Calculate potential cost savings (e.g. $50 per ticket).
+    Deflection Opportunity:
+    Filter inc_df for 'Simple' keywords: ['password', 'reset', 'access', 'admin', 'install'].
+    Display a metric: 'Potential Zero-Touch Tickets' (Count & Percentage of total).
+    
+    Returns:
+        count (int): Number of matches
+        percentage (float): Percentage of total incidents
+        savings (float): Estimated cost savings ($50/ticket)
+        df (pd.DataFrame): The filtered dataframe
     """
     if incidents_df.empty:
-        return 0, 0, pd.DataFrame()
+        return 0, 0.0, 0, pd.DataFrame()
         
-    keywords = ['password', 'reset', 'access', 'login', 'account', 'unlock']
+    keywords = ['password', 'reset', 'access', 'admin', 'install']
     pattern = '|'.join(keywords)
     
-    # creating a copy to avoid SettingWithCopy warnings
-    df = incidents_df.copy()
+    total_count = len(incidents_df)
     
     # Filter
     # Check short_description
-    mask = df['short_description'].fillna('').str.contains(pattern, case=False, regex=True)
-    deflectable = df[mask]
+    mask = incidents_df['short_description'].fillna('').str.contains(pattern, case=False, regex=True)
+    deflectable = incidents_df[mask]
     
     count = len(deflectable)
+    if total_count > 0:
+        pct = (count / total_count)
+    else:
+        pct = 0.0
+        
     estimated_cost_per_ticket = 50 # Assumption
     savings = count * estimated_cost_per_ticket
     
-    return count, savings, deflectable[['number', 'short_description', 'opened_at']]
+    return count, pct, savings, deflectable[['number', 'short_description', 'opened_at', 'assignment_group']]

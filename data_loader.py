@@ -133,11 +133,13 @@ class DataLoader:
 
         return df
 
+        return df
+
     def load_problems(self, uploaded_file=None):
         """
         Loads Problems from a CSV file.
-        Pattern: *PM*.csv or *RCA*.csv? The user mentioned problems (2). 
-        Files seen: 'PYTHON EMEA PM P1P2 (This Year).csv'
+        Pattern: *PM*.csv (e.g., 'PYTHON EMEA PM P1P2 (This Year).csv')
+        Required Cols: number, opened_at, closed_at, short_description, location.name
         """
         df = pd.DataFrame()
         
@@ -172,7 +174,15 @@ class DataLoader:
         elif 'u_resolved' in df.columns and 'closed_at' not in df.columns:
              df['closed_at'] = df['u_resolved']
 
-        text_cols = ['short_description', 'description', 'assignment_group', 'state', 'root_cause', 'problem_id', 'u_ci_type']
+        # Normalizing 'location.name' to 'location' as per User Request for Retro Audit
+        if 'location.name' in df.columns and 'location' not in df.columns:
+            df['location'] = df['location.name']
+        elif 'location.name' in df.columns and 'location' in df.columns:
+            # If both exist, prioritize location.name if location is empty? 
+            # Usually location is a sys_id and location.name is readable. We want readable.
+            df['location'] = df['location.name'].fillna(df['location'])
+
+        text_cols = ['short_description', 'description', 'assignment_group', 'state', 'root_cause', 'problem_id', 'u_ci_type', 'location']
         for col in text_cols:
             if col not in df.columns:
                 df[col] = ''

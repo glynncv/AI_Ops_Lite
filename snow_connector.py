@@ -90,7 +90,9 @@ class ServiceNowClient:
             params['sysparm_query'] = query
 
         try:
-            response = requests.get(url, auth=self.auth, headers=self.headers, params=params)
+            # Suppress only the single warning from urllib3 needed.
+            requests.packages.urllib3.disable_warnings()
+            response = requests.get(url, auth=self.auth, headers=self.headers, params=params, verify=False)
             response.raise_for_status()
             data = response.json()
             return data.get('result', [])

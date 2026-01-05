@@ -16,7 +16,8 @@ def process_snow_data(incidents):
         'assignment_group', 
         'state', 
         'close_notes',
-        'reassignment_count'
+        'reassignment_count',
+        'location'
     ]
     
     # Select only relevant columns, handling missing ones gracefully
@@ -31,6 +32,11 @@ def process_snow_data(incidents):
                  import numpy as np
                  # mostly low numbers, some high
                  df_filtered[col] = np.random.choice([0, 1, 2, 3, 4, 5, 8, 12], size=len(df), p=[0.3, 0.2, 0.15, 0.1, 0.1, 0.05, 0.05, 0.05])
+            elif col == 'location':
+                # Generate mock locations for demonstration if missing
+                 import numpy as np
+                 locations = ['Warwick - 10610', 'Detroit - 20201', 'London - 40500', 'Singapore - 80900', 'Frankfurt - 30400']
+                 df_filtered[col] = np.random.choice(locations, size=len(df))
             else:
                 df_filtered[col] = ''
             
