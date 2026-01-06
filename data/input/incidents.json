@@ -182,5 +182,15 @@
         "assignment_group": "EDI_SEEBURGER_Customer",
         "state": "New",
         "close_notes": "Escalated to L2"
+    },
+    {
+        "number": "INC7717284",
+        "opened_at": "2026-01-06T10:00:00",
+        "short_description": "CRITICAL: Global Network Outage affecting 15 sites",
+        "assignment_group": "NETWORK_OC",
+        "state": "New",
+        "priority": "1 - Critical",
+        "location": "Global",
+        "close_notes": ""
     }
 ]

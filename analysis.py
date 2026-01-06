@@ -3,6 +3,7 @@ import pandas as pd
 from collections import defaultdict
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import DBSCAN
+from sklearn.metrics.pairwise import cosine_similarity
 
 def extract_entities(text):
     """
@@ -360,3 +361,71 @@ def correlate_cluster_causes(cluster_df, changes_df):
                 })
                 
     return matches
+
+def find_similar_p1_resolutions(current_text, df):
+    """
+    Searches historical Major Incidents (Priority 1) for similarity to current text.
+    Returns list of matches formatted for display.
+    """
+    if df.empty or not current_text:
+        return []
+    
+    # Filter for P1s that are Closed/Resolved
+    # Note: 'priority' might be '1 - Critical' or just '1'. checking string contains '1'.
+    if 'priority' not in df.columns:
+        # Fallback to just all resolved if priority missing
+        candidates = df[df['state'].isin(['Closed', 'Resolved'])].copy()
+    else:
+        # lenient priority check
+        candidates = df[
+            (df['state'].isin(['Closed', 'Resolved'])) & 
+            (df['priority'].astype(str).str.startswith('1'))
+        ].copy()
+        
+    if candidates.empty:
+        # Fallback to P2 if no P1s found
+        if 'priority' in df.columns:
+             candidates = df[
+                (df['state'].isin(['Closed', 'Resolved'])) & 
+                (df['priority'].astype(str).str.startswith('2'))
+            ].copy()
+    
+    if candidates.empty:
+        return []
+
+    # Prepare text
+    candidates['search_text'] = (
+        candidates['short_description'].fillna('') + " " + 
+        candidates['description'].fillna('')
+    )
+    
+    # Vectorize
+    try:
+        vectorizer = TfidfVectorizer(stop_words='english')
+        # Fit on candidates + query to ensure vocab match
+        all_text = candidates['search_text'].tolist() + [current_text]
+        tfidf_matrix = vectorizer.fit_transform(all_text)
+        
+        candidate_matrix = tfidf_matrix[:-1]
+        query_vec = tfidf_matrix[-1]
+        
+        # Cosine Similarity
+        similarities = cosine_similarity(query_vec, candidate_matrix).flatten()
+        
+        # Get top 3
+        top_indices = similarities.argsort()[-3:][::-1]
+        
+        results = []
+        for idx in top_indices:
+            score = similarities[idx]
+            if score > 0.1: # Min threshold
+                row = candidates.iloc[idx]
+                results.append({
+                    'number': row['number'],
+                    'short_description': row['short_description'],
+                    'close_notes': row.get('close_notes', 'No notes'),
+                    'score': score
+                })
+        return results
+    except Exception as e:
+        return []

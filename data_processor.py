@@ -16,6 +16,7 @@ def process_snow_data(incidents):
         'assignment_group', 
         'state', 
         'close_notes',
+        'priority',
         'reassignment_count',
         'location'
     ]

@@ -106,13 +106,35 @@ class ServiceNowClient:
         query = f"opened_at>=javascript:gs.daysAgo({days_back})^ORDERBYDESCopened_at"
         return self.fetch_table_data('incident', limit=limit, query=query)
 
+    def fetch_closed_incidents(self, days_back=90, limit=2000):
+        """
+        Fetches closed incidents for the Recommender Engine (last 90 days).
+        """
+        # active=false AND closed_at in last 90 days
+        query = f"active=false^closed_at>=javascript:gs.daysAgo({days_back})^ORDERBYDESCclosed_at"
+        return self.fetch_table_data('incident', limit=limit, query=query)
+
     def get_problems(self, days_back=90, limit=500):
+        # Existing time-based fetch
         query = f"opened_at>=javascript:gs.daysAgo({days_back})^ORDERBYDESCopened_at"
+        return self.fetch_table_data('problem', limit=limit, query=query)
+
+    def fetch_problems(self, limit=500):
+        """
+        Fetches ONLY active problems.
+        """
+        query = "active=true^ORDERBYDESCopened_at"
         return self.fetch_table_data('problem', limit=limit, query=query)
 
     def get_changes(self, days_back=30, limit=500):
         query = f"closed_at>=javascript:gs.daysAgo({days_back})^ORDERBYDESCclosed_at"
         return self.fetch_table_data('change_request', limit=limit, query=query)
+
+    def fetch_changes(self, days_back=30, limit=500):
+        """
+        Fetches changes closed in the last 30 days.
+        """
+        return self.get_changes(days_back=days_back, limit=limit)
 
 # --- Unified Accessor ---
 def get_snow_data(table_name, client=None):

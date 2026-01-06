@@ -15,7 +15,8 @@ from analysis import (
     find_suspect_changes,
     detect_volume_spike, 
     cluster_open_incidents, 
-    correlate_cluster_causes
+    correlate_cluster_causes,
+    find_similar_p1_resolutions
 )
 from utils import generate_communication_template
 from data_loader import DataLoader
@@ -192,6 +193,162 @@ def main():
         if not changes_df.empty:
              st.sidebar.success(f"Loaded {len(changes_df)} Changes")
 
+    # --- Phase 6: War Room Mode ---
+    st.sidebar.markdown("---")
+    war_room_mode = st.sidebar.toggle('🔴 Major Incident Mode', value=False)
+    
+    if war_room_mode:
+        st.markdown("""
+        <style>
+        .war-room-header {
+            color: #d32f2f;
+            font-size: 3em;
+            font-weight: 800;
+            text-transform: uppercase;
+            border-bottom: 3px solid #d32f2f;
+            margin-bottom: 20px;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.6; }
+            100% { opacity: 1; }
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        st.markdown('<div class="war-room-header">🚨 WAR ROOM: MAJOR INCIDENT ACTIVE</div>', unsafe_allow_html=True)
+        
+        # --- Active Major Incidents Section ---
+        if not df_cleaned.empty:
+            # Filter for Open Incidents
+            open_mask = ~df_cleaned['state'].isin(['Closed', 'Resolved', 'Canceled', 'Cancelled'])
+            active_incidents = df_cleaned[open_mask].copy()
+            
+            # Filter for Priority 1/2 if priority column exists, otherwise show all open
+            if not active_incidents.empty:
+                if 'priority' in active_incidents.columns:
+                    # Filter for P1/P2 (Critical/High)
+                    mis = active_incidents[
+                        active_incidents['priority'].astype(str).str.contains('1|2|Critical|High', case=False, na=False)
+                    ]
+                else:
+                    # If no priority field, we assume all open might be relevant in mock mode,
+                    # or perhaps check for keywords in description like 'Critical'
+                    mis = active_incidents[
+                        active_incidents['short_description'].str.contains('Critical|Outage|Urgent', case=False, na=False) |
+                        (active_incidents.index == active_incidents.index) # Fallback to show items if simple filter fails? 
+                        # actually, let's just show top 5 open if no priority to be safe
+                    ].head(5)
+                
+                # If we found Major Incidents, display them prominently
+                if not mis.empty:
+                    st.error(f"⚠️ {len(mis)} MAJOR INCIDENT(S) IN PROGRESS")
+                    
+                    # Custom Styling for the Table
+                    st.dataframe(
+                        mis[['number', 'short_description', 'assignment_group', 'state', 'opened_at']].style.applymap(
+                            lambda x: 'background-color: #ffcdd2; color: #b71c1c; font-weight: bold', 
+                            subset=['number', 'state']
+                        ),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                     st.info("No Active Priority 1/2 Incidents detected in data.")
+            else:
+                 st.success("No Active Incidents.")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        # 1. Velocity Meter
+        with col1:
+            st.subheader("🔥 Velocity Meter")
+            velocity = 0.0
+            if not df_cleaned.empty:
+                # Ensure datetime
+                if not pd.api.types.is_datetime64_any_dtype(df_cleaned['opened_at']):
+                    df_cleaned['opened_at'] = pd.to_datetime(df_cleaned['opened_at'], errors='coerce')
+                
+                now = pd.Timestamp.now()
+                # 30 min window for calculation
+                limit_time = now - pd.Timedelta(minutes=30)
+                recent = df_cleaned[df_cleaned['opened_at'] >= limit_time]
+                velocity = len(recent) / 30.0
+            
+            st.metric("Incidents / Min", f"{velocity:.2f}", delta="Last 30 mins", delta_color="inverse")
+            
+        # 2. Blast Radius
+        with col2:
+            st.subheader("🌍 Blast Radius (Locations)")
+            if not df_cleaned.empty and 'location' in df_cleaned.columns:
+                affected_locs = df_cleaned['location'].value_counts().head(5)
+                st.dataframe(affected_locs.rename("Ticket Count"), width=300)
+            else:
+                st.info("No location data available.")
+
+        # 3. Change Radar
+        with col3:
+            st.subheader("📡 Change Radar")
+            if not changes_df.empty:
+                 if 'closed_at' in changes_df.columns:
+                     if not pd.api.types.is_datetime64_any_dtype(changes_df['closed_at']):
+                         changes_df['closed_at'] = pd.to_datetime(changes_df['closed_at'], errors='coerce')
+                         
+                     now = pd.Timestamp.now()
+                     # Changes closed in last 4 hours
+                     limit_time = now - pd.Timedelta(hours=4)
+                     recent_changes = changes_df[
+                         (changes_df['closed_at'] >= limit_time) &
+                         (changes_df['closed_at'] <= now + pd.Timedelta(minutes=10)) # Slush
+                     ]
+                     
+                     if not recent_changes.empty:
+                         st.error(f"Found {len(recent_changes)} Recent Changes")
+                         st.dataframe(recent_changes[['number', 'short_description', 'closed_at']].head(5), hide_index=True)
+                     else:
+                         st.success("No changes in last 4 hours")
+                 else:
+                     st.warning("Change data missing 'closed_at'")
+            else:
+                 st.info("No changes loaded.")
+
+        st.divider()
+        
+        # 4. Crisis Memory
+        st.subheader("🧠 Crisis Memory: Historical Fixes")
+        
+        # Determine query automatically from top cluster
+        query_text = ""
+        cluster_info = "Manual Entry"
+        if not df_cleaned.empty:
+             open_clusters = cluster_open_incidents(df_cleaned)
+             if not open_clusters.empty and 'Cluster_ID' in open_clusters.columns:
+                 # Find biggest valid cluster
+                 valid = open_clusters[open_clusters['Cluster_ID'] != -1]
+                 if not valid.empty:
+                     top_id = valid['Cluster_ID'].value_counts().idxmax()
+                     top_cluster = valid[valid['Cluster_ID'] == top_id]
+                     # Combine text
+                     query_text = " ".join(top_cluster['short_description'].head(3).astype(str))
+                     cluster_info = f"Cluster {top_id} (Size: {len(top_cluster)})"
+
+        search_query = st.text_input(f"Search Query ({cluster_info})", value=query_text if query_text else "Service Outage")
+        
+        if st.button("Search Historical P1s", key='war_room_search'):
+            with st.spinner("Searching Crisis Memory..."):
+                matches = find_similar_p1_resolutions(search_query, df_cleaned)
+                if matches:
+                    st.success(f"Found {len(matches)} Relevant P1 Records")
+                    for m in matches:
+                        with st.expander(f"📌 {m['number']}: {m['short_description']} (Match: {m['score']:.1%})", expanded=True):
+                            st.write("**Resolution Notes:**")
+                            st.code(m['close_notes'])
+                else:
+                    st.warning("No relevant historical P1s found.")
+        
+        st.caption("Detailed dashboard disabled in War Room mode.")
+        st.stop()
+        
     # --- Tabs Layout ---
     tab_risks, tab_dive, tab_intelligence, tab_monitoring = st.tabs(["🔴 Current Risks", "🔍 Investigation Deck", "🧠 AI Intelligence", "📊 Monitoring & ROI"])
 
@@ -230,8 +387,9 @@ def main():
                 if not open_clusters.empty and 'Cluster_ID' in open_clusters.columns:
                     valid_clusters = open_clusters[open_clusters['Cluster_ID'] != -1]
                     if not valid_clusters.empty:
-                         cluster_counts = valid_clusters['Cluster_ID'].value_counts()
-                         st.dataframe(cluster_counts.reset_index().rename(columns={'index': 'Cluster ID', 'Cluster_ID': 'Count'}), height=150, hide_index=True)
+                         cluster_counts = valid_clusters['Cluster_ID'].value_counts().reset_index()
+                         cluster_counts.columns = ['Cluster ID', 'Count']
+                         st.dataframe(cluster_counts, height=150, hide_index=True)
                          st.warning(f"{len(valid_clusters)} open incidents in {len(cluster_counts)} clusters.")
                     else:
                          st.success("No clustered open incidents.")
@@ -247,9 +405,23 @@ def main():
                 matches = correlate_cluster_causes(open_clusters, changes_df)
                 if matches:
                     st.error(f"Found {len(matches)} Suspect Changes!")
-                    for m in matches:
-                        st.markdown(f"**Cluster {m['Cluster_ID']}** linked to **{m['Suspect_Change']}**")
-                        st.caption(f"Reason: {m['Matched_Keywords']}")
+                    
+                    # Create DataFrame for display
+                    match_df = pd.DataFrame(matches)
+                    
+                    # Select meaningful columns
+                    if not match_df.empty:
+                        # Ensure we have the columns we expect (handling potential empty matches list edge cases)
+                        cols_to_show = ['Cluster_ID', 'Suspect_Change', 'Matched_Keywords']
+                        display_df = match_df[cols_to_show].copy()
+                        display_df.columns = ['Cluster', 'Change', 'Reason']
+                        
+                        st.dataframe(
+                            display_df,
+                            hide_index=True,
+                            height=300,  # Fixed height with scroll
+                            use_container_width=True
+                        )
                 else:
                     st.success("No correlation with recent changes.")
             else:
@@ -264,6 +436,73 @@ def main():
                  display_valid = valid[['Cluster_ID', 'number', 'short_description', 'assignment_group', 'state']]
                  display_valid.columns = ['Cluster ID', 'Incident Number', 'Short Description', 'Assignment Group', 'State']
                  st.dataframe(display_valid, hide_index=True)
+
+        # --- Phase 7: Solution Recommender (Agent Assist) ---
+        st.divider()
+        st.subheader("💡 Agent Assist: Solution Recommender")
+        
+        if not df_cleaned.empty:
+            # 1. Filter for Open Incidents
+            open_mask = ~df_cleaned['state'].isin(['Closed', 'Resolved', 'Canceled', 'Cancelled'])
+            open_incidents_df = df_cleaned[open_mask].copy()
+            
+            if not open_incidents_df.empty:
+                # Create a selection list relative to the Risky Clusters or just all Open
+                incident_options = open_incidents_df['number'].tolist()
+                
+                # Format options to be more descriptive
+                def format_func(x):
+                    row = open_incidents_df[open_incidents_df['number'] == x].iloc[0]
+                    return f"{x}: {str(row['short_description'])[:50]}..."
+
+                selected_open_inc = st.selectbox(
+                    "Select an Active Incident to Analyze:", 
+                    incident_options,
+                    format_func=format_func,
+                    key='agent_assist_select'
+                )
+
+                if selected_open_inc:
+                    # Get the details of the selected incident
+                    sel_row = open_incidents_df[open_incidents_df['number'] == selected_open_inc].iloc[0]
+                    sel_desc = str(sel_row.get('short_description', '')) + ' ' + str(sel_row.get('description', ''))
+                    
+                    col_assist_1, col_assist_2 = st.columns([1, 2])
+                    
+                    with col_assist_1:
+                        st.info(f"**Analyzing:** {selected_open_inc}")
+                        st.markdown(f"**Description:** {sel_row.get('short_description', 'N/A')}")
+                        st.markdown(f"**Assignment:** {sel_row.get('assignment_group', 'N/A')}")
+                        
+                        if st.button("🔍 Find Recommended Fixes", key='btn_rec_fix'):
+                            st.session_state['trigger_recommender'] = True
+                    
+                    with col_assist_2:
+                        if st.session_state.get('trigger_recommender'):
+                            with st.spinner("Searching Historical Knowledge Base..."):
+                                # Ensure we have history (Closed/Resolved) in df_cleaned
+                                recommended_fixes = find_similar_resolved_incidents(sel_desc, df_cleaned, top_n=3)
+                                
+                                if recommended_fixes:
+                                    st.success(f"Found {len(recommended_fixes)} Verified Solutions")
+                                    
+                                    for i, fix in enumerate(recommended_fixes):
+                                        # Distinct cards for recommendations
+                                        with st.container():
+                                            st.markdown(f"""
+                                            <div style="border: 1px solid #4CAF50; border-radius: 5px; padding: 10px; margin-bottom: 10px; background-color: rgba(76, 175, 80, 0.1);">
+                                                <h4 style="margin: 0; color: #2E7D32;">✅ Recommended Fix #{i+1} (Match: {fix['similarity_score']:.0%})</h4>
+                                                <small>Source: <b>{fix['incident_number']}</b> | Group: {fix['assignment_group']}</small>
+                                                <hr style="margin: 5px 0;">
+                                                <p style="font-family: monospace; white-space: pre-wrap;">{fix['resolution_notes']}</p>
+                                            </div>
+                                            """, unsafe_allow_html=True)
+                                else:
+                                    st.warning("No high-confidence historical fixes found. Consider searching Knowledge Base.")
+            else:
+                st.success("No Open Incidents to analyze.")
+        else:
+            st.info("Load data to use Agent Assist.")
 
     # ==========================
     # TAB 2: Investigation Deck (Deep Dive)

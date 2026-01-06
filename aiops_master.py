@@ -1,6 +1,10 @@
 import streamlit as st
 import pandas as pd
 import snow_connector
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Page Config
 st.set_page_config(page_title="AI Ops Flight Deck", layout="wide")
@@ -18,18 +22,58 @@ def load_unified_data(mode, uploaded_files=None):
     chg_df = pd.DataFrame()
 
     if mode == 'Live Connection':
-        with st.spinner('Fetching Live Data from ServiceNow (Mock)...'):
-            # Fetch data from mock connector
-            inc_data = snow_connector.get_snow_data('incident')
-            prb_data = snow_connector.get_snow_data('problem')
-            chg_data = snow_connector.get_snow_data('change_request')
-            
-            # Convert to DataFrames
-            if inc_data: inc_df = pd.DataFrame(inc_data)
-            if prb_data: prb_df = pd.DataFrame(prb_data)
-            if chg_data: chg_df = pd.DataFrame(chg_data)
+        # Check for Real Credentials
+        instance_url = os.getenv("SNOW_INSTANCE_URL")
+        username = os.getenv("SNOW_USERNAME")
+        password = os.getenv("SNOW_PASSWORD")
+        
+        has_creds = instance_url and username and password
+        
+        # Initialize data lists
+        inc_data = []
+        prb_data = []
+        chg_data = []
 
-            st.success("Buffers Filled from Live Stream.")
+        if has_creds:
+             with st.spinner('Fetching Live Data from ServiceNow (Real)...'):
+                try:
+                    client = snow_connector.ServiceNowClient(instance_url, username, password)
+                    
+                    # 1. Incidents: Recent Open + History Closed
+                    recent_inc = client.get_incidents(days_back=30)
+                    closed_inc = client.fetch_closed_incidents(days_back=90)
+                    
+                    # Merge and Deduplicate by number
+                    all_inc_map = {item['number']: item for item in recent_inc}
+                    for item in closed_inc:
+                        all_inc_map[item['number']] = item
+                    inc_data = list(all_inc_map.values())
+                    
+                    # 2. Problems: Active Only
+                    prb_data = client.fetch_problems()
+                    
+                    # 3. Changes: Closed Recent
+                    chg_data = client.fetch_changes()
+                    
+                    st.success(f"Connected to {instance_url} (Fetched {len(inc_data)} Incidents, {len(prb_data)} Problems, {len(chg_data)} Changes)")
+                except Exception as e:
+                    st.error(f"Live Connection Failed: {e}. Falling back to Mock.")
+                    # Fallback to Mock
+                    inc_data = snow_connector.get_snow_data('incident')
+                    prb_data = snow_connector.get_snow_data('problem')
+                    chg_data = snow_connector.get_snow_data('change_request')
+        else:
+            with st.spinner('Fetching Live Data from ServiceNow (Mock)...'):
+                # Fetch data from mock connector
+                inc_data = snow_connector.get_snow_data('incident')
+                prb_data = snow_connector.get_snow_data('problem')
+                chg_data = snow_connector.get_snow_data('change_request')
+                st.success("Buffers Filled from Live Stream (Mock).")
+            
+        # Convert to DataFrames
+        if inc_data: inc_df = pd.DataFrame(inc_data)
+        if prb_data: prb_df = pd.DataFrame(prb_data)
+        if chg_data: chg_df = pd.DataFrame(chg_data)
 
     elif mode == 'Offline Audit (CSV)':
         if uploaded_files:
