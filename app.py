@@ -38,13 +38,7 @@ def main():
     data_mode = st.sidebar.selectbox("Select Data Source", ["Live API (Mock)", "Live API (Real)", "Offline Data"])
 
     st.sidebar.markdown("---")
-    # Flash Report Trigger
-    if st.sidebar.button("Generate Flash Report"):
-        st.session_state['show_flash_report'] = True
-    else:
-        if 'show_flash_report' not in st.session_state:
-            st.session_state['show_flash_report'] = False
-    
+
     # Initialize DataFrames
     df_cleaned = pd.DataFrame()
     changes_df = pd.DataFrame()
@@ -193,13 +187,107 @@ def main():
         if not changes_df.empty:
              st.sidebar.success(f"Loaded {len(changes_df)} Changes")
 
-    # --- Tabs Layout ---
-    tab_risks, tab_dive, tab_intelligence = st.tabs(["🔴 Current Risks", "🔍 Investigation Deck", "🧠 AI Intelligence"])
+    # Welcome Banner
+    st.markdown("""
+    ### 🚀 Welcome to AIOps Lite Flight Deck
+    **Real-time incident intelligence and ML-powered automation for modern IT operations.**
+
+    Navigate through the tabs below to monitor active incidents, leverage AI assistance, analyze historical patterns, and generate reports.
+    """)
+    st.divider()
+
+    # --- Workflow-Based Tabs ---
+    tab_home, tab_active, tab_ai, tab_analysis, tab_reports = st.tabs([
+        "🏠 Dashboard",
+        "🚨 Active Incidents",
+        "🧠 AI Assistant",
+        "📈 Historical Analysis",
+        "📄 Reports"
+    ])
 
     # ==========================
-    # TAB 1: Current Risks
+    # TAB 1: Home Dashboard
     # ==========================
-    with tab_risks:
+    with tab_home:
+        st.header("📊 Operations Overview")
+
+        # Key Metrics Row
+        if not df_cleaned.empty:
+            col1, col2, col3, col4 = st.columns(4)
+
+            total_incidents = len(df_cleaned)
+            open_incidents = len(df_cleaned[~df_cleaned['state'].isin(['Closed', 'Resolved'])])
+            closed_incidents = len(df_cleaned[df_cleaned['state'].isin(['Closed', 'Resolved'])])
+
+            with col1:
+                st.metric("Total Incidents", total_incidents)
+            with col2:
+                st.metric("Open", open_incidents, delta=f"{(open_incidents/total_incidents*100):.1f}%" if total_incidents > 0 else "0%")
+            with col3:
+                st.metric("Closed", closed_incidents)
+            with col4:
+                # Calculate clusters
+                open_clusters_df = cluster_open_incidents(df_cleaned)
+                active_clusters = 0
+                if not open_clusters_df.empty and 'Cluster_ID' in open_clusters_df.columns:
+                    valid = open_clusters_df[open_clusters_df['Cluster_ID'] != -1]
+                    active_clusters = valid['Cluster_ID'].nunique() if not valid.empty else 0
+                st.metric("Active Clusters", active_clusters)
+
+            st.divider()
+
+            # Quick Status Summary
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.subheader("🎯 Current Status")
+                risk_level = "🔴 High Risk" if open_incidents > 5 else "🟢 Stable"
+                st.markdown(f"**Operational Risk:** {risk_level}")
+
+                # Spike detection
+                is_spike, daily_counts = detect_volume_spike(df_cleaned)
+                spike_status = "⚠️ Volume spike detected" if is_spike else "✅ Normal volume"
+                st.markdown(f"**Volume Status:** {spike_status}")
+
+                # Clusters
+                if active_clusters > 0:
+                    st.markdown(f"**Active Incident Clusters:** {active_clusters} patterns detected")
+                else:
+                    st.markdown("**Active Incident Clusters:** None detected")
+
+            with col2:
+                st.subheader("📈 Recent Trend")
+                if not daily_counts.empty:
+                    st.line_chart(daily_counts, height=200)
+                else:
+                    st.info("Insufficient data for trend analysis")
+
+            st.divider()
+
+            # Quick Actions
+            st.subheader("⚡ Quick Actions")
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                if st.button("🚨 View Active Incidents", use_container_width=True):
+                    st.info("Switch to 'Active Incidents' tab to investigate current risks")
+
+            with col2:
+                if st.button("🧠 Use AI Assistant", use_container_width=True):
+                    st.info("Switch to 'AI Assistant' tab to find similar incidents and smart routing")
+
+            with col3:
+                if st.button("📄 Generate Report", use_container_width=True):
+                    st.info("Switch to 'Reports' tab to create executive summaries")
+
+        else:
+            st.warning("⚠️ No data loaded. Please select a data source from the sidebar.")
+            st.info("👈 Use the sidebar to choose between Live API (Mock), Live API (Real), or Offline Data")
+
+    # ==========================
+    # TAB 2: Active Incidents
+    # ==========================
+    with tab_active:
         st.header("Real-Time Risk Monitor")
         
         col1, col2, col3 = st.columns(3)
@@ -265,79 +353,9 @@ def main():
                  st.dataframe(valid[['Cluster_ID', 'number', 'short_description', 'assignment_group', 'state']])
 
     # ==========================
-    # TAB 2: Investigation Deck (Deep Dive)
+    # TAB 3: AI Assistant
     # ==========================
-    with tab_dive:
-        st.header("Deep Dive Analysis")
-
-        # Phase 2: Clustering Analysis (All)
-        with st.expander("Analysis: Full Clustering (All States)", expanded=True):
-            if not df_cleaned.empty:
-                try:
-                    df_all_clustered = perform_clustering(df_cleaned)
-                    if 'Cluster_ID' in df_all_clustered.columns:
-                        clustered = df_all_clustered[df_all_clustered['Cluster_ID'] != -1]
-                        if not clustered.empty:
-                            st.warning('⚠️ Potential Duplicate Patterns (All Time)')
-                            st.dataframe(clustered[['Cluster_ID', 'number', 'short_description']].sort_values('Cluster_ID'))
-                        else:
-                            st.success("No patterns in full history.")
-                except Exception as e:
-                    st.error(f"Clustering Error: {e}")
-
-        # Phase 3: Historical Recursion
-        with st.expander("Analysis: Repeat Offenders", expanded=True):
-            if not df_cleaned.empty:
-                try:
-                    repeat_offenders = check_historical_recursion(df_cleaned)
-                    if repeat_offenders:
-                        st.warning("🔥 Recurring Assets/Entities Detected")
-                        st.table(pd.DataFrame(repeat_offenders))
-                    else:
-                        st.success("No recurring entities detected.")
-                except Exception as e:
-                    st.error(f"Recursion Check Error: {e}")
-
-        # Phase 4: Suspect Change Analysis (Row-wise)
-        with st.expander("Analysis: Incident-Change Correlation (Row-by-Row)", expanded=False):
-            if not df_cleaned.empty and not changes_df.empty:
-                try:
-                    st.info("Correlating 48h lookback...")
-                    df_cleaned['suspect_root_cause'] = df_cleaned.apply(
-                        lambda row: find_suspect_changes(row, changes_df, lookback_hours=48), 
-                        axis=1
-                    )
-                    suspects = df_cleaned[df_cleaned['suspect_root_cause'].map(len) > 0]
-                    if not suspects.empty:
-                        st.warning(f"Found {len(suspects)} incidents with potential change correlations.")
-                        # Format for display
-                        display = suspects[['number', 'short_description', 'suspect_root_cause']].copy()
-                        display['suspect_root_cause'] = display['suspect_root_cause'].apply(lambda x: str(x))
-                        st.dataframe(display)
-                    else:
-                        st.success("No row-wise correlations found.")
-                except Exception as e:
-                    st.error(f"Correlation Error: {e}")
-
-        # Draft Comms
-        st.divider()
-        st.header("Communication Assistant")
-        if not df_cleaned.empty:
-            mi_list = df_cleaned['number'].unique()
-            selected_mi = st.selectbox("Select Incident for Comm Draft", mi_list)
-            if selected_mi:
-                row = df_cleaned[df_cleaned['number'] == selected_mi].iloc[0]
-                impact = st.text_area("Impact Details")
-                if st.button("Generate Template"):
-                    tmpl = generate_communication_template(
-                        selected_mi, row.get('short_description'), row.get('state'), row.get('assignment_group'), impact
-                    )
-                    st.code(tmpl)
-
-    # ==========================
-    # TAB 3: AI Intelligence (NEW)
-    # ==========================
-    with tab_intelligence:
+    with tab_ai:
         st.header("🧠 AI Intelligence & Predictions")
         st.info("Advanced ML-powered features: Similar Incident Matching, Intelligent Routing, and Proactive Problem Detection")
 
@@ -516,98 +534,219 @@ Keywords: {', '.join(suggestion['top_keywords'])}
         else:
             st.warning("No incident data loaded.")
 
-    # Flash Report Overlay
-    if st.session_state.get('show_flash_report'):
         st.divider()
-        st.header("⚡ Executive Flash Report")
-        if df_cleaned.empty:
-            st.error("No Data")
+
+        # Feature 4: Communication Assistant
+        st.subheader("4️⃣ Communication Assistant")
+        st.write("Generate professional incident communication templates for stakeholders.")
+
+        if not df_cleaned.empty:
+            mi_list = df_cleaned['number'].unique()
+            selected_mi = st.selectbox("Select Incident for Communication Draft", mi_list, key='comm_incident')
+            if selected_mi:
+                row = df_cleaned[df_cleaned['number'] == selected_mi].iloc[0]
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"**Incident:** {selected_mi}")
+                    st.markdown(f"**Description:** {row.get('short_description', 'N/A')}")
+                with col2:
+                    st.markdown(f"**State:** {row.get('state', 'N/A')}")
+                    st.markdown(f"**Assignment Group:** {row.get('assignment_group', 'N/A')}")
+
+                impact = st.text_area("Describe Business Impact:", placeholder="e.g., 50 users unable to access email...")
+
+                if st.button("Generate Communication Template", key='gen_comm'):
+                    tmpl = generate_communication_template(
+                        selected_mi,
+                        row.get('short_description'),
+                        row.get('state'),
+                        row.get('assignment_group'),
+                        impact
+                    )
+                    st.success("✅ Communication template generated!")
+                    st.code(tmpl, language='text')
+
+                    st.info("💡 **Tip:** Copy this template and customize for your stakeholders")
         else:
+            st.warning("No incident data loaded.")
+
+    # ==========================
+    # TAB 4: Historical Analysis
+    # ==========================
+    with tab_analysis:
+        st.header("📈 Historical Analysis & Trends")
+        st.info("Deep dive into historical patterns, recurring issues, and root cause analysis")
+
+        # Deep Dive Analysis from Investigation Deck
+        st.subheader("Pattern Detection")
+
+        # Full Clustering Analysis (All)
+        with st.expander("Full Clustering (All States)", expanded=False):
+            if not df_cleaned.empty:
+                try:
+                    df_all_clustered = perform_clustering(df_cleaned)
+                    if 'Cluster_ID' in df_all_clustered.columns:
+                        clustered = df_all_clustered[df_all_clustered['Cluster_ID'] != -1]
+                        if not clustered.empty:
+                            st.warning('⚠️ Potential Duplicate Patterns (All Time)')
+                            st.dataframe(clustered[['Cluster_ID', 'number', 'short_description']].sort_values('Cluster_ID'))
+                        else:
+                            st.success("No patterns in full history.")
+                except Exception as e:
+                    st.error(f"Clustering Error: {e}")
+            else:
+                st.info("No data available")
+
+        # Historical Recursion
+        with st.expander("Repeat Offenders (Recurring Assets)", expanded=False):
+            if not df_cleaned.empty:
+                try:
+                    repeat_offenders = check_historical_recursion(df_cleaned)
+                    if repeat_offenders:
+                        st.warning("🔥 Recurring Assets/Entities Detected")
+                        st.table(pd.DataFrame(repeat_offenders))
+                    else:
+                        st.success("No recurring entities detected.")
+                except Exception as e:
+                    st.error(f"Recursion Check Error: {e}")
+            else:
+                st.info("No data available")
+
+        # Suspect Change Analysis (Row-wise)
+        with st.expander("Incident-Change Correlation (Row-by-Row)", expanded=False):
+            if not df_cleaned.empty and not changes_df.empty:
+                try:
+                    st.info("Correlating 48h lookback...")
+                    df_cleaned['suspect_root_cause'] = df_cleaned.apply(
+                        lambda row: find_suspect_changes(row, changes_df, lookback_hours=48),
+                        axis=1
+                    )
+                    suspects = df_cleaned[df_cleaned['suspect_root_cause'].map(len) > 0]
+                    if not suspects.empty:
+                        st.warning(f"Found {len(suspects)} incidents with potential change correlations.")
+                        # Format for display
+                        display = suspects[['number', 'short_description', 'suspect_root_cause']].copy()
+                        display['suspect_root_cause'] = display['suspect_root_cause'].apply(lambda x: str(x))
+                        st.dataframe(display)
+                    else:
+                        st.success("No row-wise correlations found.")
+                except Exception as e:
+                    st.error(f"Correlation Error: {e}")
+            else:
+                st.info("Need both incident and change data")
+
+        st.divider()
+
+        # Retro Audit (formerly Phase 5)
+        st.subheader("Retrospective Analysis")
+
+        # Timeline Fusion
+        with st.expander("Timeline Fusion (Incidents vs Problems)", expanded=False):
+            st.write("Visualizing the relationship between Incidents (Blue) and Problem Records (Red).")
+
+            if not df_cleaned.empty and not problems_df.empty:
+                fig = create_timeline_fusion_chart(df_cleaned, problems_df)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Insufficient data for Timeline Fusion. Ensure both Incidents and Problems are loaded.")
+
+        # Zombie Problems
+        with st.expander("Zombie Problems (Recurring Problem Records)", expanded=False):
+            st.write("Entities with >1 Problem Record in the last 12 months.")
+
+            if not problems_df.empty:
+                zombies = identify_zombie_problems(problems_df)
+                if not zombies.empty:
+                    st.warning(f"Found {len(zombies)} Zombie Entities!")
+                    st.dataframe(zombies, use_container_width=True)
+                else:
+                    st.success("No Zombie Problems detected (Entities with multiple Problem records).")
+            else:
+                st.warning("No Problem data loaded.")
+
+        # Deflection Opportunity
+        with st.expander("Deflection Opportunity Analysis", expanded=False):
+            st.write("Potential cost savings from automating keyword-matched incidents.")
+
+            if not df_cleaned.empty:
+                deflect_count, savings, deflect_df = calculate_deflection_opportunity(df_cleaned)
+
+                col1, col2 = st.columns(2)
+                col1.metric("Deflectable Tickets", deflect_count)
+                col2.metric("Potential Savings", f"${savings:,}")
+
+                if not deflect_df.empty:
+                    with st.expander("View Deflectable Candidates"):
+                        st.dataframe(deflect_df)
+            else:
+                st.warning("No Incident data loaded.")
+
+    # ==========================
+    # TAB 5: Reports
+    # ==========================
+    with tab_reports:
+        st.header("📄 Executive Reports & Summaries")
+        st.info("Generate reports and summaries for stakeholders")
+
+        # Flash Report (moved from floating position)
+        st.subheader("⚡ Flash Report")
+        st.write("Quick executive summary of current operational status")
+
+        if not df_cleaned.empty:
             # Simple metrics for now
             total = len(df_cleaned)
             open_cnt = len(df_cleaned[~df_cleaned['state'].isin(['Closed', 'Resolved'])])
-            st.markdown(f"""
-            **Status**: {'🔴 High Risk' if open_cnt > 5 else '🟢 Stable'}
-            - **Total Incidents**: {total}
-            - **Open Incidents**: {open_cnt}
-            """)
-            
-            # Generating dynamic flash report content
-            risk = "High" if open_cnt > 5 else "Low"
-            
-            active_clusters_val = 0
-            if not df_cleaned.empty:
-                oc = cluster_open_incidents(df_cleaned)
-                if not oc.empty and 'Cluster_ID' in oc.columns:
-                     active_clusters_val = oc['Cluster_ID'].nunique()
 
-            chronic_sites_val = []
-            if not df_cleaned.empty:
-                ro = check_historical_recursion(df_cleaned)
-                if ro:
-                     chronic_sites_val = [x['Entity'] for x in ro[:3]]
-            
-            deflect_val = 0
-            if not df_cleaned.empty:
-                 d_count, _, _ = calculate_deflection_opportunity(df_cleaned)
-                 deflect_val = d_count
+            # Generate flash report button
+            if st.button("Generate Flash Report", key='gen_flash', type='primary'):
+                st.success("✅ Flash Report Generated!")
 
-            template = f"""
+                st.markdown(f"""
+                **Status**: {'🔴 High Risk' if open_cnt > 5 else '🟢 Stable'}
+                - **Total Incidents**: {total}
+                - **Open Incidents**: {open_cnt}
+                """)
+
+                # Generating dynamic flash report content
+                risk = "High" if open_cnt > 5 else "Low"
+
+                active_clusters_val = 0
+                if not df_cleaned.empty:
+                    oc = cluster_open_incidents(df_cleaned)
+                    if not oc.empty and 'Cluster_ID' in oc.columns:
+                         active_clusters_val = oc['Cluster_ID'].nunique()
+
+                chronic_sites_val = []
+                if not df_cleaned.empty:
+                    ro = check_historical_recursion(df_cleaned)
+                    if ro:
+                         chronic_sites_val = [x['Entity'] for x in ro[:3]]
+
+                deflect_val = 0
+                if not df_cleaned.empty:
+                     d_count, _, _ = calculate_deflection_opportunity(df_cleaned)
+                     deflect_val = d_count
+
+                template = f"""
 EXECUTIVE FLASH REPORT
 ----------------------
 ⚠️ Operational Risk: {risk}
 Active Clusters: {active_clusters_val}
 Chronic Sites: {', '.join(chronic_sites_val) if chronic_sites_val else 'None'}
 Deflection Potential: {deflect_val} tickets
-            """
-            # 4. Display this in a st.code block
-            st.code(template, language='text')
+                """
+                st.code(template, language='text')
 
-    # --- Phase 5: Retro Audit (Back to the Future) ---
-    st.header("Phase 5: Retro Audit (Back to the Future)")
-    
-    tab_audit, tab_zombies, tab_deflection = st.tabs(["The Timeline Fusion", "Zombie Problems", "Deflection Opportunity"])
-    
-    with tab_audit:
-        st.subheader("The Timeline Fusion")
-        st.write("Visualizing the relationship between Incidents (Blue) and Problem Records (Red).")
-        
-        if not df_cleaned.empty and not problems_df.empty:
-            fig = create_timeline_fusion_chart(df_cleaned, problems_df)
-            st.plotly_chart(fig, use_container_width=True)
+                st.info("💡 **Tip:** Copy this report for executive communications")
         else:
-            st.info("Insufficient data for Timeline Fusion. Ensure both Incidents and Problems are loaded.")
+            st.warning("⚠️ No data loaded. Please load data from the sidebar first.")
 
-    with tab_zombies:
-        st.subheader("Recursion Table: Zombie Problems")
-        st.write("Entities with >1 Problem Record in the last 12 months.")
-        
-        if not problems_df.empty:
-            zombies = identify_zombie_problems(problems_df)
-            if not zombies.empty:
-                st.warning(f"Found {len(zombies)} Zombie Entities!")
-                st.dataframe(zombies, use_container_width=True)
-            else:
-                st.success("No Zombie Problems detected (Entities with multiple Problem records).")
-        else:
-            st.warning("No Problem data loaded.")
-            
-    with tab_deflection:
-        st.subheader("Deflection Opportunity")
-        st.write("Potential cost savings from automating keyword-matched incidents.")
-        
-        if not df_cleaned.empty:
-            deflect_count, savings, deflect_df = calculate_deflection_opportunity(df_cleaned)
-            
-            col1, col2 = st.columns(2)
-            col1.metric("Deflectable Tickets", deflect_count)
-            col2.metric("Potential Savings", f"${savings:,}")
-            
-            if not deflect_df.empty:
-                with st.expander("View Deflectable Candidates"):
-                    st.dataframe(deflect_df)
-        else:
-            st.warning("No Incident data loaded.")
+        st.divider()
+
+        # Future: Export Options
+        st.subheader("📊 Export Options")
+        st.info("🚧 Coming Soon: Export data to CSV, PDF, or Excel formats")
 
 if __name__ == "__main__":
     main()
