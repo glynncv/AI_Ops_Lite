@@ -266,3 +266,14 @@
 {"timestamp": "2026-01-06T14:11:43.673559", "event_type": "performance", "function": "find_similar_incidents", "duration_ms": 19.29, "status": "success", "error": null}
 {"timestamp": "2026-01-06T14:16:43.205160", "event_type": "performance", "function": "find_similar_incidents", "duration_ms": 10.28, "status": "success", "error": null}
 {"timestamp": "2026-01-06T14:16:43.205160", "event_type": "performance", "function": "find_similar_incidents", "duration_ms": 10.28, "status": "success", "error": null}
+{"timestamp": "2026-01-07T11:49:16.650508", "event_type": "performance", "function": "find_similar_incidents", "duration_ms": 3.17, "status": "success", "error": null}
+{"timestamp": "2026-01-07T11:49:16.650508", "event_type": "performance", "function": "find_similar_incidents", "duration_ms": 3.17, "status": "success", "error": null}
+{"timestamp": "2026-01-07T11:49:16.650508", "event_type": "performance", "function": "find_similar_incidents", "duration_ms": 3.17, "status": "success", "error": null}
+{"timestamp": "2026-01-07T11:50:11.342205", "event_type": "performance", "function": "find_similar_incidents", "duration_ms": 2.68, "status": "success", "error": null}
+{"timestamp": "2026-01-07T11:50:11.342205", "event_type": "performance", "function": "find_similar_incidents", "duration_ms": 2.68, "status": "success", "error": null}
+{"timestamp": "2026-01-07T11:50:11.342205", "event_type": "performance", "function": "find_similar_incidents", "duration_ms": 2.68, "status": "success", "error": null}
+{"timestamp": "2026-01-07T12:48:48.827798", "event_type": "performance", "function": "find_similar_incidents", "duration_ms": 12.24, "status": "success", "error": null}
+{"timestamp": "2026-01-07T12:49:03.431666", "event_type": "performance", "function": "suggest_problem_creation", "duration_ms": 0.76, "status": "success", "error": null}
+{"timestamp": "2026-01-07T12:49:03.432562", "event_type": "performance", "function": "suggest_problem_creation", "duration_ms": 0.55, "status": "success", "error": null}
+{"timestamp": "2026-01-07T12:49:03.433094", "event_type": "performance", "function": "suggest_problem_creation", "duration_ms": 0.4, "status": "success", "error": null}
+{"timestamp": "2026-01-07T12:49:03.433316", "event_type": "performance", "function": "batch_suggest_problems", "duration_ms": 3.41, "status": "success", "error": null}
