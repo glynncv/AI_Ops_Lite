@@ -25,6 +25,9 @@ from retro_analysis import create_timeline_fusion_chart, identify_zombie_problem
 from aiops_intelligence import (
     find_similar_resolved_incidents,
     IntelligentRouter,
+    RuleBasedRouter,
+    DataQualityChecker,
+    ConfidenceCalibrator,
     suggest_problem_creation,
     batch_suggest_problems,
     calculate_mttr_improvement
@@ -683,6 +686,23 @@ def main():
         st.write("Find how similar past incidents were resolved to accelerate current resolutions.")
 
         if not df_cleaned.empty:
+            # Check data quality for similar incidents
+            sim_quality = DataQualityChecker.check_similar_incidents_data_quality(df_cleaned)
+
+            # Show data quality status
+            col_status, col_metrics = st.columns([2, 1])
+            with col_status:
+                if sim_quality['sufficient']:
+                    st.success(f"✅ **Data Quality:** {sim_quality['reason']}")
+                else:
+                    st.warning(f"⚠️ **Data Quality:** {sim_quality['reason']}")
+
+            with col_metrics:
+                if sim_quality.get('metrics') and 'progress_pct' in sim_quality['metrics']:
+                    metrics = sim_quality['metrics']
+                    st.metric("Data Progress", f"{metrics['progress_pct']}%",
+                             delta=f"{metrics.get('incidents_with_notes', metrics.get('resolved_incidents', 0))}/{metrics['target']}")
+
             # Select an incident to analyze
             incident_list = df_cleaned['number'].unique()
             selected_incident = st.selectbox("Select an Incident to Find Similar Cases", incident_list, key='similar_inc')
@@ -718,7 +738,10 @@ def main():
                             if improvement.get('avg_historical_resolution_hours'):
                                 st.info(f"💡 **Time Savings Potential:** Using these similar incidents could save ~{improvement['estimated_time_savings_hours']:.1f} hours (30% of avg {improvement['avg_historical_resolution_hours']:.1f}h)")
                         else:
-                            st.warning("No similar resolved incidents found.")
+                            if not sim_quality['sufficient']:
+                                st.info(f"💡 **Tip:** {sim_quality['reason']} Add resolution notes to closed incidents to improve search results.")
+                            else:
+                                st.warning("No similar resolved incidents found for this case.")
         else:
             st.warning("No incident data loaded.")
 
@@ -726,59 +749,118 @@ def main():
 
         # Feature 2: Intelligent Assignment/Routing
         st.subheader("2️⃣ Intelligent Assignment Routing")
-        st.write("ML-powered prediction of which team should handle new incidents.")
+        st.write("ML-powered prediction with rule-based fallback for limited data scenarios.")
 
         if not df_cleaned.empty:
-            # Initialize router in session state
+            # Initialize routers in session state
             if 'router' not in st.session_state:
                 st.session_state.router = IntelligentRouter()
+            if 'rule_router' not in st.session_state:
+                st.session_state.rule_router = RuleBasedRouter()
 
-            # Train button
-            col1, col2 = st.columns([1, 3])
-            with col1:
-                if st.button("Train Assignment Model", key='train_router'):
-                    with st.spinner("Training ML model on historical data..."):
-                        metrics = st.session_state.router.train(df_cleaned)
+            # Check data quality first
+            quality = DataQualityChecker.check_routing_data_quality(df_cleaned)
 
-                        if metrics.get('success'):
-                            st.success(f"✅ Model trained on {metrics['num_training_samples']} incidents")
-                            st.info(f"Training Accuracy: {metrics['training_accuracy']:.1%}")
-                            st.write(f"**Assignment Groups:** {metrics['num_assignment_groups']}")
+            # Show data quality status
+            col_status, col_metrics = st.columns([2, 1])
+            with col_status:
+                if quality['sufficient']:
+                    st.success(f"✅ **Data Quality:** {quality['reason']}")
+                    st.caption("📊 ML-powered routing available")
+                else:
+                    st.warning(f"⚠️ **Data Quality:** {quality['reason']}")
+                    st.caption("🔧 Using rule-based routing (always reliable)")
 
-                            # Show group distribution
-                            if metrics.get('assignment_groups'):
-                                with st.expander("View Group Distribution"):
-                                    group_df = pd.DataFrame(list(metrics['assignment_groups'].items()),
-                                                           columns=['Assignment Group', 'Count'])
-                                    st.dataframe(group_df.sort_values('Count', ascending=False))
+            with col_metrics:
+                if quality.get('metrics'):
+                    metrics = quality['metrics']
+                    if 'progress_pct' in metrics:
+                        st.metric("Data Progress", f"{metrics['progress_pct']}%",
+                                 delta=f"{metrics['resolved_incidents']}/{metrics['target']} incidents")
+
+            # Training section (only if data is sufficient)
+            if quality['sufficient']:
+                col1, col2 = st.columns([1, 3])
+                with col1:
+                    if st.button("Train ML Model", key='train_router'):
+                        with st.spinner("Training ML model on historical data..."):
+                            metrics = st.session_state.router.train(df_cleaned)
+
+                            if metrics.get('success'):
+                                st.success(f"✅ Model trained on {metrics['num_training_samples']} incidents")
+                                st.info(f"Training Accuracy: {metrics['training_accuracy']:.1%}")
+                                st.write(f"**Assignment Groups:** {metrics['num_assignment_groups']}")
+
+                                # Show group distribution
+                                if metrics.get('assignment_groups'):
+                                    with st.expander("View Group Distribution"):
+                                        group_df = pd.DataFrame(list(metrics['assignment_groups'].items()),
+                                                               columns=['Assignment Group', 'Count'])
+                                        st.dataframe(group_df.sort_values('Count', ascending=False), hide_index=True)
+                            else:
+                                st.error(f"⚠️ {metrics.get('reason', 'Training failed')}")
+                                if metrics.get('use_fallback'):
+                                    st.info("💡 Using rule-based routing instead")
+
+            # Prediction section
+            st.markdown("**Test Routing Prediction:**")
+            test_description = st.text_area("Enter incident description:",
+                                            value="Global network outage affecting all remote VPN users",
+                                            key='routing_test_desc')
+
+            if st.button("Predict Assignment", key='predict_assign'):
+                # Determine which router to use
+                use_ml = quality['sufficient'] and st.session_state.router.trained
+
+                if use_ml:
+                    # Use ML router with calibrated confidence
+                    predictions = st.session_state.router.predict_assignment(test_description, top_n=3, min_confidence=0.60)
+                    routing_method = "🤖 ML Model (Calibrated)"
+                else:
+                    # Use rule-based router
+                    predictions = st.session_state.rule_router.predict_assignment(test_description, top_n=3, min_confidence=0.60)
+                    routing_method = "🔧 Rule-Based"
+
+                if predictions and not predictions[0].get('error'):
+                    st.success(f"🎯 Recommended Assignment ({routing_method}):")
+
+                    for i, pred in enumerate(predictions):
+                        if i == 0:
+                            # Highlight top recommendation
+                            st.markdown(f"### 🥇 {pred['assignment_group']}")
+
+                            # Show calibrated confidence if ML
+                            if 'calibrated_confidence' in pred:
+                                conf_to_show = pred['calibrated_confidence']
+                                st.progress(conf_to_show)
+                                st.caption(f"**{pred['confidence_label']}** - Calibrated: {conf_to_show:.0%} (Raw: {pred['confidence']:.0%})")
+                                st.caption(f"💡 {pred['recommendation']}")
+                            else:
+                                conf_to_show = pred['confidence']
+                                st.progress(conf_to_show)
+                                st.caption(f"Confidence: {conf_to_show:.0%}")
+
+                            st.caption(f"🔍 {pred['reasoning']}")
                         else:
-                            st.error(f"Training failed: {metrics.get('error', 'Unknown error')}")
-
-            # Predict assignment
-            if st.session_state.router.trained:
-                st.markdown("**Test the Model:**")
-                test_description = st.text_area("Enter incident description for routing prediction:",
-                                                value="VPN connection failed for remote users")
-
-                if st.button("Predict Assignment", key='predict_assign'):
-                    predictions = st.session_state.router.predict_assignment(test_description, top_n=3)
-
-                    if predictions and not predictions[0].get('error'):
-                        st.success("🎯 Recommended Assignment:")
-
-                        for i, pred in enumerate(predictions):
-                            if i == 0:
-                                # Highlight top recommendation
-                                st.markdown(f"### 🥇 {pred['assignment_group']}")
-                                st.progress(pred['confidence'])
-                                st.caption(f"Confidence: {pred['confidence']:.0%} | {pred['reasoning']}")
+                            # Show alternatives
+                            if 'calibrated_confidence' in pred:
+                                st.markdown(f"**Alternative {i}:** {pred['assignment_group']} ({pred['calibrated_confidence']:.0%} - {pred['confidence_label']})")
                             else:
                                 st.markdown(f"**Alternative {i}:** {pred['assignment_group']} ({pred['confidence']:.0%})")
-                                st.caption(pred['reasoning'])
+                            st.caption(pred['reasoning'])
 
-                        st.info("💰 **Business Impact:** Intelligent routing reduces mis-routing by 60-80%, saving ~2 hours per ticket.")
+                    st.info("💰 **Business Impact:** Intelligent routing reduces mis-routing by 60-80%, saving ~2 hours per ticket.")
+
+                    # Show method used
+                    if use_ml:
+                        st.caption(f"✅ Using ML predictions with confidence calibration based on {st.session_state.router.num_training_samples} training samples")
                     else:
-                        st.error("Prediction failed. Please train the model first.")
+                        st.caption("✅ Using reliable keyword-based routing (no training data required)")
+                else:
+                    if not predictions:
+                        st.warning("⚠️ No matching assignment groups found. Try a more detailed description.")
+                    else:
+                        st.error("Prediction failed. Please check the model status.")
         else:
             st.warning("No incident data loaded.")
 
