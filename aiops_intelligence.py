@@ -160,7 +160,9 @@ class IntelligentRouter:
             return {'error': 'No training data'}
 
         # Filter to resolved incidents with assignment groups
-        resolved_mask = historical_df['state'].isin(['Closed', 'Resolved'])
+        # Handle case-insensitive state matching and common variations
+        state_lower = historical_df['state'].str.lower() if historical_df['state'].dtype == 'object' else historical_df['state']
+        resolved_mask = state_lower.isin(['closed', 'resolved', 'complete', 'cancelled', 'canceled'])
         train_df = historical_df[resolved_mask].copy()
 
         if 'assignment_group' not in train_df.columns:

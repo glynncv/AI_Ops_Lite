@@ -28,6 +28,7 @@ from aiops_intelligence import (
     batch_suggest_problems,
     calculate_mttr_improvement
 )
+from retro_analysis import calculate_deflection_opportunity
 
 def main():
     st.set_page_config(page_title="AI_Ops Flight Deck", layout="wide")
@@ -562,21 +563,6 @@ def main():
                 except Exception as e:
                     st.error(f"Correlation Error: {e}")
 
-        # Draft Comms
-        st.divider()
-        st.header("Communication Assistant")
-        if not df_cleaned.empty:
-            mi_list = df_cleaned['number'].unique()
-            selected_mi = st.selectbox("Select Incident for Comm Draft", mi_list)
-            if selected_mi:
-                row = df_cleaned[df_cleaned['number'] == selected_mi].iloc[0]
-                impact = st.text_area("Impact Details")
-                if st.button("Generate Template"):
-                    tmpl = generate_communication_template(
-                        selected_mi, row.get('short_description'), row.get('state'), row.get('assignment_group'), impact
-                    )
-                    st.code(tmpl)
-
     # ==========================
     # TAB 3: AI Intelligence (NEW)
     # ==========================
@@ -584,8 +570,109 @@ def main():
         st.header("🧠 AI Intelligence & Predictions")
         st.info("Advanced ML-powered features: Similar Incident Matching, Intelligent Routing, and Proactive Problem Detection")
 
-        # Feature 1: Similar Incident Recommendation
-        st.subheader("1️⃣ Similar Incident Recommendation")
+        # Feature 1: Incident Cluster & Problem Lookup
+        st.subheader("🔍 Incident Cluster & Problem Lookup")
+        st.write("Quick triage: Check if an incident is part of a known cluster or linked to a Problem Record.")
+
+        if not df_cleaned.empty:
+            col_search1, col_search2 = st.columns([2, 1])
+            
+            with col_search1:
+                # Allow both text input and dropdown
+                search_mode = st.radio("Search by:", ["Incident Number", "Select from List"], horizontal=True, key='search_mode')
+                
+                if search_mode == "Incident Number":
+                    lookup_incident = st.text_input("Enter Incident Number", placeholder="e.g., INC0012345", key='lookup_inc_text')
+                else:
+                    incident_list = df_cleaned['number'].unique()
+                    lookup_incident = st.selectbox("Select Incident", incident_list, key='lookup_inc_select')
+            
+            if lookup_incident:
+                # Find the incident
+                incident_match = df_cleaned[df_cleaned['number'] == lookup_incident]
+                
+                if not incident_match.empty:
+                    incident = incident_match.iloc[0]
+                    
+                    # Display incident details
+                    st.markdown("---")
+                    st.markdown(f"### 📋 Incident: {incident['number']}")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("State", incident.get('state', 'N/A'))
+                    with col2:
+                        st.metric("Priority", incident.get('priority', 'N/A'))
+                    with col3:
+                        st.metric("Assignment Group", incident.get('assignment_group', 'N/A'))
+                    
+                    st.markdown(f"**Description:** {incident.get('short_description', 'N/A')}")
+                    
+                    # Check for cluster membership
+                    has_cluster = 'Cluster_ID' in df_cleaned.columns and pd.notna(incident.get('Cluster_ID'))
+                    
+                    if has_cluster:
+                        cluster_id = incident['Cluster_ID']
+                        
+                        if cluster_id != -1:  # -1 is noise/outlier
+                            st.success(f"✅ This incident is part of **Cluster #{int(cluster_id)}**")
+                            
+                            # Find related incidents in same cluster
+                            cluster_incidents = df_cleaned[df_cleaned['Cluster_ID'] == cluster_id]
+                            related_count = len(cluster_incidents) - 1  # Exclude current incident
+                            
+                            if related_count > 0:
+                                st.info(f"🔗 **{related_count} related incident(s)** in this cluster")
+                                
+                                with st.expander(f"View Related Incidents ({related_count})"):
+                                    related_df = cluster_incidents[cluster_incidents['number'] != lookup_incident][
+                                        ['number', 'short_description', 'state', 'assignment_group', 'opened_at']
+                                    ].head(20)
+                                    st.dataframe(related_df, use_container_width=True, hide_index=True)
+                            
+                            # Check for linked Problem Records
+                            if 'prb_df' in st.session_state and not st.session_state['prb_df'].empty:
+                                problems_df = st.session_state['prb_df']
+                                
+                                # Simple check: look for problem records with similar keywords or related to this cluster
+                                # In production, you'd have explicit links in ServiceNow
+                                st.markdown("**🎯 Related Problem Records:**")
+                                
+                                # Check if any problems mention this cluster or incident
+                                related_problems = problems_df[
+                                    problems_df['short_description'].str.contains(
+                                        incident.get('short_description', '')[:30], 
+                                        case=False, 
+                                        na=False
+                                    )
+                                ].head(3)
+                                
+                                if not related_problems.empty:
+                                    st.success(f"Found {len(related_problems)} potentially related Problem Record(s)")
+                                    for _, prb in related_problems.iterrows():
+                                        st.markdown(f"- **{prb['number']}:** {prb.get('short_description', 'N/A')} (State: {prb.get('state', 'N/A')})")
+                                else:
+                                    st.warning("No related Problem Records found")
+                                    
+                                    # Suggest creating one if cluster is large
+                                    if related_count >= 3:
+                                        st.info(f"💡 **Suggestion:** This cluster has {related_count + 1} incidents. Consider creating a Problem Record.")
+                            else:
+                                st.info("ℹ️ No Problem Record data loaded. Load Problems to see related PRBs.")
+                        else:
+                            st.warning("⚠️ This incident is not clustered (outlier/noise)")
+                    else:
+                        st.info("ℹ️ Clustering not yet performed. Run clustering in the 'Proactive Problem Detection' section below.")
+                    
+                elif lookup_incident:  # User entered something but not found
+                    st.error(f"❌ Incident '{lookup_incident}' not found in loaded data")
+        else:
+            st.warning("No incident data loaded.")
+
+        st.divider()
+
+        # Feature 2: Similar Incident Recommendation
+        st.subheader("2️⃣ Similar Incident Recommendation")
         st.write("Find how similar past incidents were resolved to accelerate current resolutions.")
 
         if not df_cleaned.empty:
@@ -630,8 +717,8 @@ def main():
 
         st.divider()
 
-        # Feature 2: Intelligent Assignment/Routing
-        st.subheader("2️⃣ Intelligent Assignment Routing")
+        # Feature 3: Intelligent Assignment/Routing
+        st.subheader("3️⃣ Intelligent Assignment Routing")
         st.write("ML-powered prediction of which team should handle new incidents.")
 
         if not df_cleaned.empty:
@@ -639,10 +726,71 @@ def main():
             if 'router' not in st.session_state:
                 st.session_state.router = IntelligentRouter()
 
+            # Show data readiness info
+            total_incidents = len(df_cleaned)
+            # Handle case-insensitive state matching
+            state_lower = df_cleaned['state'].str.lower() if df_cleaned['state'].dtype == 'object' else df_cleaned['state']
+            resolved_mask = state_lower.isin(['closed', 'resolved', 'complete', 'cancelled', 'canceled'])
+            resolved_count = int(resolved_mask.sum())  # Convert to Python int to avoid numpy bool issues
+            state_counts = df_cleaned['state'].value_counts()
+            
+            with st.expander("📊 Training Data Status", expanded=True):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Incidents", total_incidents)
+                with col2:
+                    st.metric("Resolved/Closed", resolved_count)
+                with col3:
+                    ready = "✅ Ready" if resolved_count >= 10 else "❌ Not Ready"
+                    st.metric("Training Ready", ready)
+                
+                st.write("**State Distribution:**")
+                st.dataframe(state_counts.reset_index().rename(columns={'index': 'State', 'state': 'Count'}), 
+                           hide_index=True, use_container_width=True)
+                
+                if resolved_count < 10:
+                    st.warning(f"⚠️ Need at least 10 resolved/closed incidents to train. Currently have {resolved_count}.")
+                    st.info("💡 Tip: Make sure your data includes incidents with state 'Closed' or 'Resolved'")
+                    
+                    # Add option to fetch historical closed incidents if in live mode
+                    if st.session_state.get('data_mode') == 'real':
+                        st.markdown("**📥 Fetch Historical Resolved Incidents for Training:**")
+                        col_fetch1, col_fetch2 = st.columns([1, 2])
+                        with col_fetch1:
+                            days_back = st.number_input("Days of history", min_value=30, max_value=365, value=90, step=30, key='hist_days')
+                        with col_fetch2:
+                            if st.button("🔄 Fetch Closed Incidents", key='fetch_closed'):
+                                try:
+                                    with st.spinner(f"Fetching closed incidents from last {days_back} days..."):
+                                        from snow_connector import ServiceNowClient
+                                        instance_url = os.getenv('SNOW_INSTANCE_URL')
+                                        username = os.getenv('SNOW_USERNAME')
+                                        password = os.getenv('SNOW_PASSWORD')
+                                        
+                                        client = ServiceNowClient(instance_url, username, password)
+                                        closed_data = client.fetch_closed_incidents(days_back=days_back, limit=2000)
+                                        
+                                        if closed_data:
+                                            closed_df = process_snow_data(closed_data)
+                                            
+                                            # Merge with existing data (avoiding duplicates)
+                                            if not df_cleaned.empty:
+                                                combined_df = pd.concat([df_cleaned, closed_df]).drop_duplicates(subset=['number'], keep='first')
+                                            else:
+                                                combined_df = closed_df
+                                            
+                                            st.session_state['inc_df'] = combined_df
+                                            st.success(f"✅ Fetched {len(closed_df)} closed incidents! Total: {len(combined_df)} incidents")
+                                            st.rerun()
+                                        else:
+                                            st.error("No closed incidents found")
+                                except Exception as e:
+                                    st.error(f"Error fetching closed incidents: {e}")
+
             # Train button
             col1, col2 = st.columns([1, 3])
             with col1:
-                if st.button("Train Assignment Model", key='train_router'):
+                if st.button("Train Assignment Model", key='train_router', disabled=(resolved_count < 10)):
                     with st.spinner("Training ML model on historical data..."):
                         metrics = st.session_state.router.train(df_cleaned)
 
@@ -690,8 +838,8 @@ def main():
 
         st.divider()
 
-        # Feature 3: Auto-Problem Creation Suggestions
-        st.subheader("3️⃣ Proactive Problem Detection")
+        # Feature 4: Auto-Problem Creation Suggestions
+        st.subheader("4️⃣ Proactive Problem Detection")
         st.write("Automatically suggest Problem Records for recurring incident patterns.")
 
         if not df_cleaned.empty:
@@ -703,59 +851,107 @@ def main():
                     df_clustered = perform_clustering(df_cleaned)
 
                     if 'Cluster_ID' in df_clustered.columns:
-                        # Get problem suggestions
+                        # Get problem suggestions and store in session state
                         problem_suggestions = batch_suggest_problems(df_clustered, threshold=threshold)
+                        st.session_state['problem_suggestions'] = problem_suggestions
+                    else:
+                        st.session_state['problem_suggestions'] = []
 
-                        if problem_suggestions:
-                            st.success(f"🔥 Found {len(problem_suggestions)} cluster(s) that should have Problem Records!")
+            # Display problem suggestions from session state (persists across reruns)
+            if 'problem_suggestions' in st.session_state and st.session_state['problem_suggestions']:
+                problem_suggestions = st.session_state['problem_suggestions']
+                st.success(f"🔥 Found {len(problem_suggestions)} cluster(s) that should have Problem Records!")
 
-                            for i, suggestion in enumerate(problem_suggestions):
-                                with st.expander(f"📋 Problem Suggestion {i+1}: {suggestion['problem_title']}", expanded=(i==0)):
-                                    col1, col2, col3 = st.columns(3)
+                for i, suggestion in enumerate(problem_suggestions):
+                    # Keep expander open if button was clicked or if it's the first one
+                    is_expanded = st.session_state.get(f'problem_draft_{i}', False) or (i==0)
+                    
+                    with st.expander(f"📋 Problem Suggestion {i+1}: {suggestion['problem_title']}", expanded=is_expanded):
+                        col1, col2, col3 = st.columns(3)
 
-                                    with col1:
-                                        st.metric("Incident Count", suggestion['incident_count'])
-                                    with col2:
-                                        st.metric("Time Span", f"{suggestion['time_span_days']} days")
-                                    with col3:
-                                        st.metric("Priority", suggestion['priority'])
+                        with col1:
+                            st.metric("Incident Count", suggestion['incident_count'])
+                        with col2:
+                            st.metric("Time Span", f"{suggestion['time_span_days']} days")
+                        with col3:
+                            st.metric("Priority", suggestion['priority'])
 
-                                    st.markdown(f"**Cluster ID:** {suggestion['cluster_id']}")
-                                    st.markdown(f"**Recommended Assignment:** {suggestion['assignment_group']}")
-                                    st.markdown(f"**Business Impact:** {suggestion['business_impact']}")
+                        st.markdown(f"**Cluster ID:** {suggestion['cluster_id']}")
+                        st.markdown(f"**Recommended Assignment:** {suggestion['assignment_group']}")
+                        st.markdown(f"**Business Impact:** {suggestion['business_impact']}")
 
-                                    if suggestion.get('affected_assets'):
-                                        st.markdown(f"**Affected Assets:** {', '.join(suggestion['affected_assets'][:5])}")
+                        if suggestion.get('affected_assets'):
+                            st.markdown(f"**Affected Assets:** {', '.join(suggestion['affected_assets'][:5])}")
 
-                                    st.markdown("**Related Incidents:**")
-                                    st.code(', '.join(suggestion['related_incidents'][:10]), language='text')
+                        st.markdown("**Related Incidents:**")
+                        st.code(', '.join(suggestion['related_incidents'][:10]), language='text')
 
-                                    st.markdown("**Recommended Actions:**")
-                                    for action in suggestion['recommended_actions']:
-                                        st.markdown(f"- {action}")
+                        st.markdown("**Recommended Actions:**")
+                        for action in suggestion['recommended_actions']:
+                            st.markdown(f"- {action}")
 
-                                    if st.button(f"Create Problem Record (Draft)", key=f'create_prb_{i}'):
-                                        st.info("🚀 In production, this would create a ServiceNow Problem Record")
-                                        st.code(f"""
+                        # Use session state to persist display
+                        button_key = f'create_prb_{i}'
+                        if st.button(f"Create Problem Record (Draft)", key=button_key):
+                            st.session_state[f'problem_draft_{i}'] = True
+                            st.rerun()
+                        
+                        # Display problem record details if button was clicked
+                        if st.session_state.get(f'problem_draft_{i}', False):
+                            st.info("🚀 In production, this would create a ServiceNow Problem Record")
+                            try:
+                                problem_details = f"""
 Problem Record Details:
 ━━━━━━━━━━━━━━━━━━━━━━
 Title: {suggestion['problem_title']}
 Priority: {suggestion['priority']}
 Assignment: {suggestion['assignment_group']}
 Related Incidents: {len(suggestion['related_incidents'])}
-Affected Assets: {', '.join(suggestion['affected_assets'][:3])}
+Affected Assets: {', '.join(suggestion.get('affected_assets', [])[:3])}
 
 Description:
 {suggestion['business_impact']}
 
-Keywords: {', '.join(suggestion['top_keywords'])}
-                                        """, language='text')
+Keywords: {', '.join(suggestion.get('top_keywords', []))}
+"""
+                                st.code(problem_details, language='text')
+                            except Exception as e:
+                                st.error(f"Error displaying problem record: {e}")
 
-                            st.success("💰 **Business Impact:** Proactive problem management prevents ~20 repeat incidents/month, saving $50K+/year")
-                        else:
-                            st.info(f"No clusters found with >= {threshold} incidents. Try lowering the threshold.")
-                    else:
-                        st.error("Clustering failed. Please check your data.")
+                st.success("💰 **Business Impact:** Proactive problem management prevents ~20 repeat incidents/month, saving $50K+/year")
+            else:
+                if 'problem_suggestions' not in st.session_state:
+                    st.info(f"Click 'Analyze Clusters' to detect problem opportunities.")
+                else:
+                    st.info(f"No clusters found with >= {threshold} incidents. Try lowering the threshold.")
+        else:
+            st.warning("No incident data loaded.")
+
+        st.divider()
+
+        # Feature 5: Communication Assistant
+        st.subheader("5️⃣ Communication Assistant")
+        st.write("Generate professional communication templates for incident updates.")
+
+        if not df_cleaned.empty:
+            incident_list = df_cleaned['number'].unique()
+            selected_incident = st.selectbox("Select Incident for Communication Draft", incident_list, key='comm_assist_inc')
+            
+            if selected_incident:
+                incident_row = df_cleaned[df_cleaned['number'] == selected_incident].iloc[0]
+                impact = st.text_area("Impact Details", key='comm_assist_impact', 
+                                     placeholder="e.g., Service outage affecting 50 users")
+                
+                if st.button("Generate Template", key='comm_assist_generate'):
+                    tmpl = generate_communication_template(
+                        selected_incident, 
+                        incident_row.get('short_description', ''), 
+                        incident_row.get('state', ''), 
+                        incident_row.get('assignment_group', ''), 
+                        impact
+                    )
+                    st.success("✅ Communication Template Generated")
+                    st.code(tmpl, language='text')
         else:
             st.warning("No incident data loaded.")
 
@@ -977,7 +1173,7 @@ Keywords: {', '.join(suggestion['top_keywords'])}
             
             deflect_val = 0
             if not df_cleaned.empty:
-                 d_count, _, _ = calculate_deflection_opportunity(df_cleaned)
+                 d_count, _, _, _ = calculate_deflection_opportunity(df_cleaned)
                  deflect_val = d_count
 
             template = f"""
