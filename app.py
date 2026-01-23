@@ -484,8 +484,21 @@ def main():
                                     if suggestion.get('affected_assets'):
                                         st.markdown(f"**Affected Assets:** {', '.join(suggestion['affected_assets'][:5])}")
 
-                                    st.markdown("**Related Incidents:**")
-                                    st.code(', '.join(suggestion['related_incidents'][:10]), language='text')
+                                    # Display all incidents with smart formatting
+                                    incident_count = len(suggestion['related_incidents'])
+                                    st.markdown(f"**Related Incidents ({incident_count}):**")
+
+                                    if incident_count <= 20:
+                                        # Show all incidents inline for small lists
+                                        st.code(', '.join(suggestion['related_incidents']), language='text')
+                                    else:
+                                        # For large lists, show in scrollable code block with newlines for readability
+                                        incident_list = '\n'.join([
+                                            ', '.join(suggestion['related_incidents'][i:i+10])
+                                            for i in range(0, incident_count, 10)
+                                        ])
+                                        st.code(incident_list, language='text')
+                                        st.caption(f"Displaying all {incident_count} incidents (grouped by 10 per line)")
 
                                     st.markdown("**Recommended Actions:**")
                                     for action in suggestion['recommended_actions']:
@@ -493,17 +506,32 @@ def main():
 
                                     if st.button(f"Create Problem Record (Draft)", key=f'create_prb_{i}'):
                                         st.info("🚀 In production, this would create a ServiceNow Problem Record")
+
+                                        # Format incident list for readability in template
+                                        incident_count = len(suggestion['related_incidents'])
+                                        if incident_count <= 50:
+                                            incidents_formatted = ', '.join(suggestion['related_incidents'])
+                                        else:
+                                            # For very large lists, group by 10 per line
+                                            incidents_formatted = '\n'.join([
+                                                ', '.join(suggestion['related_incidents'][i:i+10])
+                                                for i in range(0, incident_count, 10)
+                                            ])
+
                                         st.code(f"""
 Problem Record Details:
 ━━━━━━━━━━━━━━━━━━━━━━
 Title: {suggestion['problem_title']}
 Priority: {suggestion['priority']}
 Assignment: {suggestion['assignment_group']}
-Related Incidents: {len(suggestion['related_incidents'])}
-Affected Assets: {', '.join(suggestion['affected_assets'][:3])}
+Cluster ID: {suggestion['cluster_id']}
+Affected Assets: {', '.join(suggestion.get('affected_assets', [])[:5])}
 
 Description:
 {suggestion['business_impact']}
+
+Related Incidents ({incident_count}):
+{incidents_formatted}
 
 Keywords: {', '.join(suggestion['top_keywords'])}
                                         """, language='text')

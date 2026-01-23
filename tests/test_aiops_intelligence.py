@@ -122,3 +122,29 @@ def test_batch_suggest_problems(clustered_incidents):
     suggestions = batch_suggest_problems(clustered_incidents, threshold=3)
     assert len(suggestions) == 1
     assert suggestions[0]['cluster_id'] == 1
+
+def test_problem_suggestion_includes_all_incidents():
+    """Verify problem suggestions include complete incident lists (no truncation)"""
+    # Create cluster with 50 incidents
+    incident_numbers = [f'INC{str(i).zfill(7)}' for i in range(1, 51)]
+    data = {
+        'number': incident_numbers,
+        'short_description': ['Database timeout'] * 50,
+        'Cluster_ID': [1] * 50,
+        'assignment_group': ['DBA'] * 50,
+        'priority': ['High'] * 50,
+        'opened_at': pd.to_datetime(['2023-01-01'] * 50)
+    }
+    df = pd.DataFrame(data)
+
+    suggestion = suggest_problem_creation(df, cluster_id=1, threshold=10)
+
+    assert suggestion is not None
+    assert len(suggestion['related_incidents']) == 50
+    assert all(inc.startswith('INC') for inc in suggestion['related_incidents'])
+
+    # Verify no truncation in data structure
+    assert suggestion['incident_count'] == len(suggestion['related_incidents'])
+
+    # Verify all original incident numbers are present
+    assert set(suggestion['related_incidents']) == set(incident_numbers)
