@@ -28,6 +28,14 @@ from aiops_intelligence import (
     batch_suggest_problems,
     calculate_mttr_improvement
 )
+from vendor_audit import (
+    detect_burst_rate,
+    detect_flapping,
+    detect_topology_gaps,
+    detect_severity_mismatch,
+    create_human_vs_machine_chart,
+    get_audit_summary
+)
 
 def main():
     st.set_page_config(page_title="AI_Ops Flight Deck", layout="wide")
@@ -194,7 +202,12 @@ def main():
              st.sidebar.success(f"Loaded {len(changes_df)} Changes")
 
     # --- Tabs Layout ---
-    tab_risks, tab_dive, tab_intelligence = st.tabs(["🔴 Current Risks", "🔍 Investigation Deck", "🧠 AI Intelligence"])
+    tab_risks, tab_dive, tab_intelligence, tab_vendor_audit = st.tabs([
+        "🔴 Current Risks",
+        "🔍 Investigation Deck",
+        "🧠 AI Intelligence",
+        "👮 Vendor Audit"
+    ])
 
     # ==========================
     # TAB 1: Current Risks
@@ -515,6 +528,225 @@ Keywords: {', '.join(suggestion['top_keywords'])}
                         st.error("Clustering failed. Please check your data.")
         else:
             st.warning("No incident data loaded.")
+
+    # ==========================
+    # TAB 4: Vendor Audit
+    # ==========================
+    with tab_vendor_audit:
+        st.header("👮 Vendor Audit Dashboard")
+        st.info("Analyze vendor incident data for noise, topology gaps, and ticket quality issues.")
+
+        # Data Source Selection
+        st.subheader("Data Source")
+        audit_data_source = st.radio(
+            "Select data to analyze:",
+            ["Use Current Incident Data", "Upload Vendor CSV"],
+            horizontal=True,
+            key="audit_data_source"
+        )
+
+        audit_df = pd.DataFrame()
+
+        if audit_data_source == "Use Current Incident Data":
+            if not df_cleaned.empty:
+                audit_df = df_cleaned.copy()
+                st.success(f"Using {len(audit_df)} incidents from current session.")
+            else:
+                st.warning("No incident data loaded. Please load data from the sidebar or upload a vendor CSV.")
+
+        else:  # Upload Vendor CSV
+            vendor_file = st.file_uploader(
+                "Upload Vendor's incident.csv export",
+                type=['csv'],
+                key="vendor_audit_upload"
+            )
+
+            if vendor_file is not None:
+                try:
+                    # Try multiple encodings
+                    for encoding in ['utf-8', 'cp1252', 'latin1']:
+                        try:
+                            vendor_file.seek(0)
+                            audit_df = pd.read_csv(vendor_file, encoding=encoding)
+                            break
+                        except UnicodeDecodeError:
+                            continue
+
+                    if not audit_df.empty:
+                        st.success(f"Loaded {len(audit_df)} incidents from vendor CSV.")
+
+                        # Show column preview
+                        with st.expander("Preview Columns"):
+                            st.write(list(audit_df.columns))
+                except Exception as e:
+                    st.error(f"Error loading CSV: {e}")
+
+        # Run Analysis if data is available
+        if not audit_df.empty:
+            st.divider()
+
+            # Convert datetime columns
+            if 'opened_at' in audit_df.columns:
+                audit_df['opened_at'] = pd.to_datetime(audit_df['opened_at'], errors='coerce')
+            if 'u_resolved' in audit_df.columns:
+                audit_df['u_resolved'] = pd.to_datetime(audit_df['u_resolved'], errors='coerce')
+
+            # Summary Metrics Row
+            st.subheader("Audit Summary")
+            summary = get_audit_summary(audit_df)
+
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                st.metric("Total Tickets", summary['total_tickets'])
+            with col2:
+                st.metric("Max Burst Rate", f"{summary['burst_rate']} tkt/sec")
+            with col3:
+                st.metric("Noise Ratio", f"{summary['noise_ratio']:.1f}%")
+            with col4:
+                st.metric("Ghost Rate", f"{summary['ghost_rate']:.1f}%")
+
+            st.divider()
+
+            # ========== METRIC 1: Machine Gun Detector ==========
+            with st.expander("🔫 Metric 1: Machine Gun Detector (Burst Analysis)", expanded=True):
+                st.markdown("""
+                **What it detects:** Tickets created in rapid succession (multiple per second).
+                This indicates automated ticket generation or event storms.
+                """)
+
+                max_burst, burst_table = detect_burst_rate(audit_df)
+
+                col1, col2 = st.columns([1, 3])
+
+                with col1:
+                    st.metric(
+                        "Max Burst Rate",
+                        f"{max_burst} tickets/sec",
+                        delta="Alert" if max_burst > 1 else "Normal",
+                        delta_color="inverse" if max_burst > 1 else "normal"
+                    )
+
+                with col2:
+                    if not burst_table.empty:
+                        st.warning(f"Found {len(burst_table)} timestamps with burst activity!")
+                        st.dataframe(burst_table.head(20), use_container_width=True)
+                    else:
+                        st.success("No burst activity detected. Tickets are created at normal pace.")
+
+            # ========== METRIC 2: Flapping Detector ==========
+            with st.expander("⚡ Metric 2: Flapping Detector (Instant Close)", expanded=True):
+                st.markdown("""
+                **What it detects:** Tickets closed within 2 minutes of creation.
+
+                **Interpretation:** *These are auto-clearing alerts that should not be tickets.*
+                """)
+
+                noise_ratio, noise_count, total_resolved, flapping_df = detect_flapping(audit_df)
+
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    st.metric(
+                        "Noise Ratio",
+                        f"{noise_ratio:.1f}%",
+                        delta=f"{noise_count} tickets" if noise_count > 0 else "Clean",
+                        delta_color="inverse" if noise_ratio > 10 else "normal"
+                    )
+
+                with col2:
+                    st.metric("Noise Tickets", noise_count)
+
+                with col3:
+                    st.metric("Total Resolved", total_resolved)
+
+                if not flapping_df.empty:
+                    st.warning("These tickets closed too quickly - likely auto-clearing alerts:")
+                    st.dataframe(flapping_df.head(50), use_container_width=True)
+                else:
+                    st.success("No flapping tickets detected.")
+
+            # ========== METRIC 3: Ghost Hunter ==========
+            with st.expander("👻 Metric 3: Ghost Hunter (Topology Gap)", expanded=True):
+                st.markdown("""
+                **What it detects:** Tickets with empty/null CMDB CI or invalid CI types.
+
+                **Interpretation:** *We cannot troubleshoot what we cannot see.*
+                """)
+
+                ghost_rate, ghost_count, total_count, ghost_df = detect_topology_gaps(audit_df)
+
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    st.metric(
+                        "Ghost Rate",
+                        f"{ghost_rate:.1f}%",
+                        delta="Gap Detected" if ghost_rate > 5 else "Healthy",
+                        delta_color="inverse" if ghost_rate > 5 else "normal"
+                    )
+
+                with col2:
+                    st.metric("Ghost Tickets", ghost_count)
+
+                with col3:
+                    st.metric("Total Analyzed", total_count)
+
+                if not ghost_df.empty:
+                    st.warning("These tickets have no valid CI - topology gaps:")
+                    st.dataframe(ghost_df.head(50), use_container_width=True)
+                else:
+                    st.success("All tickets have valid CI assignments.")
+
+            # ========== METRIC 4: Cry Wolf Detector ==========
+            with st.expander("🐺 Metric 4: Cry Wolf Detector (Severity Mismatch)", expanded=True):
+                st.markdown("""
+                **What it detects:** High severity tickets with low priority (false alarms).
+
+                **Pattern:** Severity = '1 - High' AND Priority = '4 - Low'
+                """)
+
+                if 'severity' not in audit_df.columns:
+                    st.info("ℹ️ The 'severity' column is not present in this dataset. This metric requires both 'severity' and 'priority' columns.")
+                    st.caption("Available columns: " + ", ".join(sorted(audit_df.columns)))
+                else:
+                    mismatch_count, mismatch_df = detect_severity_mismatch(audit_df)
+
+                    st.metric(
+                        "False Alarms",
+                        mismatch_count,
+                        delta="Issues Found" if mismatch_count > 0 else "Clean",
+                        delta_color="inverse" if mismatch_count > 0 else "normal"
+                    )
+
+                    if not mismatch_df.empty:
+                        st.warning("These tickets have mismatched severity/priority:")
+                        st.dataframe(mismatch_df.head(50), use_container_width=True)
+                    else:
+                        st.success("No severity/priority mismatches detected.")
+
+            # ========== VISUAL: Human vs Machine ==========
+            st.divider()
+            st.subheader("📊 Human vs Machine Analysis")
+            st.markdown("""
+            **Comparison:** Tickets closed in < 2 minutes (Machine/Auto-resolved) vs >= 2 minutes (Human effort).
+            """)
+
+            fig = create_human_vs_machine_chart(audit_df)
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Interpretation
+            noise_ratio_val, noise_count_val, total_resolved_val, _ = detect_flapping(audit_df)
+            human_count = total_resolved_val - noise_count_val if total_resolved_val > 0 else 0
+
+            if total_resolved_val > 0:
+                st.markdown(f"""
+                **Summary:**
+                - **Machine (Auto-closed):** {noise_count_val} tickets ({noise_ratio_val:.1f}%)
+                - **Human (Manual effort):** {human_count} tickets ({100 - noise_ratio_val:.1f}%)
+
+                *High machine ratio indicates noisy alerting that should be tuned at the source.*
+                """)
 
     # Flash Report Overlay
     if st.session_state.get('show_flash_report'):
