@@ -3,10 +3,48 @@ import pandas as pd
 from collections import defaultdict
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import DBSCAN
+from sklearn.metrics.pairwise import cosine_similarity
+
+# Common words to exclude from entity extraction (noise in alert/incident descriptions)
+_ENTITY_STOP_WORDS = frozenset([
+    # Alert/status terms
+    'critical', 'alert', 'error', 'errors', 'warning', 'warnings', 'failed', 'failure',
+    'logicmonitor', 'monitor', 'issue', 'problem', 'high', 'low', 'medium', 'severe',
+    'down', 'offline', 'timeout', 'connect', 'connection', 'service', 'services',
+    'urgent', 'priority',
+    # Common English words
+    'the', 'for', 'and', 'or', 'with', 'to', 'in', 'on', 'at', 'of', 'is', 'it', 'this',
+    'that', 'from', 'by', 'as', 'an', 'a', 'not', 'no', 'be', 'are', 'was', 'were',
+    'have', 'has', 'had', 'been', 'being', 'do', 'does', 'did', 'can', 'could', 'will',
+    'would', 'may', 'might', 'must', 'shall', 'should', 'all', 'each', 'every', 'both',
+    # Generic tech/ITSM terms
+    'resource', 'resources', 'subscription', 'subscriptions', 'system', 'systems',
+    'number', 'numbers', 'dialog', 'enough', 'receiving', 'address', 'host', 'hosts',
+    'customer', 'customers', 'visible',
+    'server', 'servers', 'database', 'network', 'application', 'applications',
+    'request', 'requests', 'response', 'responses', 'time', 'status', 'state',
+])
+
+def _is_noise_entity(entity: str) -> bool:
+    """Returns True if entity is noise (stop word or derived from one)."""
+    lower = entity.lower()
+    if lower in _ENTITY_STOP_WORDS:
+        return True
+    # Strip trailing digits and hyphens to get root (e.g. "the-20026" -> "the", "resource123" -> "resource")
+    root = re.sub(r'[-0-9]+$', '', lower)
+    root = root.rstrip('-')
+    if root in _ENTITY_STOP_WORDS:
+        return True
+    # Also check leading stop word (e.g. "the-something-123")
+    for stop in _ENTITY_STOP_WORDS:
+        if len(stop) >= 2 and (root == stop or root.startswith(stop + '-') or root.startswith(stop + '_')):
+            return True
+    return False
 
 def extract_entities(text):
     """
     Extracts potential entities (IPs, 6-digit IDs, Server Names) from text using Regex.
+    Excludes common alert/ITSM words that are noise (e.g. critical, alert).
     """
     if not isinstance(text, str):
         return []
@@ -16,23 +54,25 @@ def extract_entities(text):
     # Regex Patterns
     
     # 1. IP Addresses (IPv4) - Simple pattern
-    # Matches 4 groups of 1-3 digits separated by dots
     ip_pattern = r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
     entities.extend(re.findall(ip_pattern, text))
     
     # 2. 6-Digit Numbers (Potential IDs)
-    # strictly 6 digits
     id_pattern = r'\b\d{6}\b'
     entities.extend(re.findall(id_pattern, text))
     
-    # 3. Server Names / Asset IDs
-    # Heuristic: Alphanumeric string (3+ chars) containing at least one digit and one letter.
-    # Matches things like: "web01", "db-server-02", "NYC-09"
-    # Excludes: "123456" (caught by id_pattern or just numbers), "Error" (just letters)
+    # 3. Server Names / Asset IDs (alphanumeric + digit + hyphen, 3+ chars)
     server_pattern = r'\b(?=.*\d)(?=.*[a-zA-Z])[a-zA-Z0-9-]{3,}\b'
-    entities.extend(re.findall(server_pattern, text))
+    server_entities = re.findall(server_pattern, text)
     
-    # Dedup within the single text string
+    # Filter out noise (the-20026, resource123, subscription-01, etc.)
+    for e in server_entities:
+        if not _is_noise_entity(e):
+            entities.append(e)
+    
+    # Final pass: exclude any entity that's noise (safety for IP/6-digit edge cases)
+    entities = [e for e in entities if not _is_noise_entity(e)]
+    
     return list(set(entities))
 
 def check_historical_recursion(df):
@@ -360,3 +400,71 @@ def correlate_cluster_causes(cluster_df, changes_df):
                 })
                 
     return matches
+
+def find_similar_p1_resolutions(current_text, df):
+    """
+    Searches historical Major Incidents (Priority 1) for similarity to current text.
+    Returns list of matches formatted for display.
+    """
+    if df.empty or not current_text:
+        return []
+    
+    # Filter for P1s that are Closed/Resolved
+    # Note: 'priority' might be '1 - Critical' or just '1'. checking string contains '1'.
+    if 'priority' not in df.columns:
+        # Fallback to just all resolved if priority missing
+        candidates = df[df['state'].isin(['Closed', 'Resolved'])].copy()
+    else:
+        # lenient priority check
+        candidates = df[
+            (df['state'].isin(['Closed', 'Resolved'])) & 
+            (df['priority'].astype(str).str.startswith('1'))
+        ].copy()
+        
+    if candidates.empty:
+        # Fallback to P2 if no P1s found
+        if 'priority' in df.columns:
+             candidates = df[
+                (df['state'].isin(['Closed', 'Resolved'])) & 
+                (df['priority'].astype(str).str.startswith('2'))
+            ].copy()
+    
+    if candidates.empty:
+        return []
+
+    # Prepare text
+    candidates['search_text'] = (
+        candidates['short_description'].fillna('') + " " + 
+        candidates['description'].fillna('')
+    )
+    
+    # Vectorize
+    try:
+        vectorizer = TfidfVectorizer(stop_words='english')
+        # Fit on candidates + query to ensure vocab match
+        all_text = candidates['search_text'].tolist() + [current_text]
+        tfidf_matrix = vectorizer.fit_transform(all_text)
+        
+        candidate_matrix = tfidf_matrix[:-1]
+        query_vec = tfidf_matrix[-1]
+        
+        # Cosine Similarity
+        similarities = cosine_similarity(query_vec, candidate_matrix).flatten()
+        
+        # Get top 3
+        top_indices = similarities.argsort()[-3:][::-1]
+        
+        results = []
+        for idx in top_indices:
+            score = similarities[idx]
+            if score > 0.1: # Min threshold
+                row = candidates.iloc[idx]
+                results.append({
+                    'number': row['number'],
+                    'short_description': row['short_description'],
+                    'close_notes': row.get('close_notes', 'No notes'),
+                    'score': score
+                })
+        return results
+    except Exception as e:
+        return []

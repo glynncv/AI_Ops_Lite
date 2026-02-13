@@ -4,6 +4,8 @@ import pandas as pd
 from collections import defaultdict
 import re
 
+from analysis import _is_noise_entity
+
 def create_timeline_fusion_chart(incidents_df, problems_df):
     """
     Creates a Plotly Scatter plot combining Incidents (Blue Dots) and Problems (Red Lines).
@@ -101,15 +103,17 @@ def identify_zombie_problems(problems_df):
         groupable_cols.append('location')
         
     # If explicit columns exist, use them. Else falls back to text extraction.
+    # Support both 'location' and 'location.u_site_name' (ServiceNow export)
+    loc_col = 'location' if 'location' in problems_df.columns else ('location.u_site_name' if 'location.u_site_name' in problems_df.columns else None)
     
-    # We will use a hybrid approach:
-    # A. Count duplicates in 'location'
-    if 'location' in problems_df.columns:
-        loc_counts = problems_df['location'].value_counts()
+    # A. Count duplicates in location
+    if loc_col:
+        loc_series = problems_df[loc_col].fillna('').astype(str)
+        loc_counts = loc_series[loc_series != ''].value_counts()
         for loc, count in loc_counts.items():
-            if count > 1 and loc: # Ignore empty
+            if count > 1 and loc:
                 # Get details
-                subset = problems_df[problems_df['location'] == loc]
+                subset = problems_df[problems_df[loc_col].fillna('').astype(str) == loc]
                 zombies.append({
                     'Type': 'Location',
                     'Entity': loc,
@@ -135,7 +139,8 @@ def identify_zombie_problems(problems_df):
         found = set(re.findall(ip_pattern, desc) + re.findall(server_pattern, desc))
         
         for ent in found:
-            entity_map[ent].append(num)
+            if not _is_noise_entity(ent):
+                entity_map[ent].append(num)
             
     for ent, nums in entity_map.items():
         if len(set(nums)) > 1:

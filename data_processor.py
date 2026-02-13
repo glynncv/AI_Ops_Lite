@@ -7,7 +7,7 @@ def process_snow_data(incidents):
     # Convert list to DataFrame
     df = pd.DataFrame(incidents)
     
-    # Define relevant columns
+    # Define relevant columns (include priority & location for War Room)
     relevant_columns = [
         'number', 
         'short_description', 
@@ -16,7 +16,12 @@ def process_snow_data(incidents):
         'assignment_group', 
         'state', 
         'close_notes',
-        'reassignment_count'
+        'reassignment_count',
+        'priority',
+        'location',
+        'closed_at',
+        'sys_created_on',
+        'sys_updated_on'
     ]
     
     # Select only relevant columns, handling missing ones gracefully
@@ -37,10 +42,10 @@ def process_snow_data(incidents):
     # Reorder columns to match the requested order
     df = df_filtered[relevant_columns]
 
-    # Convert opened_at to datetime
-    # Coerce errors to NaT, then handle if needed
-    if 'opened_at' in df.columns:
-        df['opened_at'] = pd.to_datetime(df['opened_at'], errors='coerce')
+    # Convert date columns to datetime
+    for col in ['opened_at', 'closed_at', 'sys_created_on', 'sys_updated_on']:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors='coerce')
 
     # Fill null values in text columns with empty strings
     text_columns = ['number', 'short_description', 'description', 'assignment_group', 'state', 'close_notes']

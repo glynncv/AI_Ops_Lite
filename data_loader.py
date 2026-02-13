@@ -74,6 +74,10 @@ class DataLoader:
         if 'incident_state' in df.columns and 'state' not in df.columns:
             df['state'] = df['incident_state']
         
+        # Map location.u_site_name to location (ServiceNow export format)
+        if 'location.u_site_name' in df.columns and 'location' not in df.columns:
+            df['location'] = df['location.u_site_name'].fillna('')
+        
         return df
 
     def load_changes(self, uploaded_file=None):
@@ -178,5 +182,9 @@ class DataLoader:
                 df[col] = ''
             else:
                 df[col] = df[col].fillna('')
+        
+        # Map location.u_site_name to location (ServiceNow export format)
+        if 'location.u_site_name' in df.columns and 'location' not in df.columns:
+            df['location'] = df['location.u_site_name'].fillna('')
                 
         return df

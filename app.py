@@ -16,7 +16,8 @@ from analysis import (
     find_suspect_changes,
     detect_volume_spike, 
     cluster_open_incidents, 
-    correlate_cluster_causes
+    correlate_cluster_causes,
+    find_similar_p1_resolutions
 )
 from utils import generate_communication_template
 from data_loader import DataLoader
@@ -134,7 +135,15 @@ def main():
         if should_connect:
             try:
                 with st.spinner("Auto-Connecting to ServiceNow..."):
-                    client = snow_connector.ServiceNowClient(instance_url, username, password)
+                    # Bypass proxy by default (use_proxy=False) to avoid connection issues
+                    # Set SNOW_USE_PROXY=true in .env if you need proxy access
+                    use_proxy = os.getenv('SNOW_USE_PROXY', 'false').lower() == 'true'
+                    
+                    # SSL verification - can be disabled for corporate environments with self-signed certs
+                    # Set SNOW_VERIFY_SSL=false in .env if you get SSL certificate errors
+                    verify_ssl = os.getenv('SNOW_VERIFY_SSL', 'true').lower() == 'true'
+                    
+                    client = snow_connector.ServiceNowClient(instance_url, username, password, use_proxy=use_proxy, verify_ssl=verify_ssl)
                     
                     # 1. Incidents
                     inc_data = snow_connector.get_snow_data('incident', client)
@@ -193,8 +202,199 @@ def main():
         if not changes_df.empty:
              st.sidebar.success(f"Loaded {len(changes_df)} Changes")
 
+    # --- Phase 6: War Room Mode ---
+    st.sidebar.markdown("---")
+    war_room_mode = st.sidebar.toggle('🔴 Major Incident Mode', value=False)
+    
+    if war_room_mode:
+        st.markdown("""
+        <style>
+        .war-room-header {
+            color: #d32f2f;
+            font-size: 3em;
+            font-weight: 800;
+            text-transform: uppercase;
+            border-bottom: 3px solid #d32f2f;
+            margin-bottom: 20px;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.6; }
+            100% { opacity: 1; }
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        st.markdown('<div class="war-room-header">🚨 WAR ROOM: MAJOR INCIDENT ACTIVE</div>', unsafe_allow_html=True)
+        
+        # --- Active Major Incidents Section ---
+        if not df_cleaned.empty:
+            # Filter for Open Incidents
+            open_mask = ~df_cleaned['state'].isin(['Closed', 'Resolved', 'Canceled', 'Cancelled'])
+            active_incidents = df_cleaned[open_mask].copy()
+            
+            # Filter for Priority 1/2 if priority column exists, otherwise show all open
+            if not active_incidents.empty:
+                mis = pd.DataFrame()
+                
+                if 'priority' in active_incidents.columns:
+                    # Check if priority column has actual values (not all null/empty)
+                    has_priority_data = active_incidents['priority'].notna().any()
+                    
+                    if has_priority_data:
+                        # Filter for P1/P2 - match priorities that START with "1" or "2"
+                        # This catches: "1", "1 - Critical", "2", "2 - High", etc.
+                        # But NOT: "4 - Low" even if description contains "critical"
+                        mis = active_incidents[
+                            active_incidents['priority'].astype(str).str.match(r'^[12](\s|-|$)', na=False)
+                        ]
+                    else:
+                        # Priority column exists but has no data - fall back to keyword search
+                        st.info("📋 Priority field is empty — using keyword search. Ensure ServiceNow returns priority values.")
+                        mis = active_incidents[
+                            active_incidents['short_description'].str.contains('Critical|Outage|Urgent|P1|P2', case=False, na=False)
+                        ].head(5)
+                else:
+                    # No priority column - fall back to keyword search (e.g. Offline CSV or Mock data)
+                    st.info("📋 Using keyword search (Critical/Outage/Urgent/P1/P2) — add a *priority* column to your data for accurate P1/P2 filtering.")
+                    mis = active_incidents[
+                        active_incidents['short_description'].str.contains('Critical|Outage|Urgent|P1|P2', case=False, na=False)
+                    ].head(5)
+                
+                # If we found Major Incidents, display them prominently
+                if not mis.empty:
+                    st.error(f"⚠️ {len(mis)} MAJOR INCIDENT(S) IN PROGRESS")
+                    
+                    # Include priority column if it exists
+                    display_cols = ['number', 'short_description', 'assignment_group', 'state', 'opened_at']
+                    if 'priority' in mis.columns:
+                        display_cols.insert(1, 'priority')
+                    
+                    st.dataframe(
+                        mis[display_cols],
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                     st.info("No Active Priority 1/2 Incidents detected in data.")
+            else:
+                 st.success("No Active Incidents.")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        # 1. Velocity Meter
+        with col1:
+            st.subheader("🔥 Velocity Meter")
+            velocity = 0.0
+            if not df_cleaned.empty:
+                # Ensure datetime
+                if not pd.api.types.is_datetime64_any_dtype(df_cleaned['opened_at']):
+                    df_cleaned['opened_at'] = pd.to_datetime(df_cleaned['opened_at'], errors='coerce')
+                
+                now = pd.Timestamp.now()
+                # 30 min window for calculation
+                limit_time = now - pd.Timedelta(minutes=30)
+                recent = df_cleaned[df_cleaned['opened_at'] >= limit_time]
+                velocity = len(recent) / 30.0
+            
+            st.metric("Incidents / Min", f"{velocity:.2f}", delta="Last 30 mins", delta_color="inverse")
+            
+        # 2. Blast Radius
+        with col2:
+            st.subheader("🌍 Blast Radius (Locations)")
+            if not df_cleaned.empty and 'location' in df_cleaned.columns:
+                affected_locs = df_cleaned['location'].value_counts().head(5)
+                st.dataframe(affected_locs.rename("Ticket Count"), width=300)
+            else:
+                st.info("No location data available.")
+
+        # 3. Change Radar
+        with col3:
+            st.subheader("📡 Change Radar")
+            if not changes_df.empty:
+                 if 'closed_at' in changes_df.columns:
+                     if not pd.api.types.is_datetime64_any_dtype(changes_df['closed_at']):
+                         changes_df['closed_at'] = pd.to_datetime(changes_df['closed_at'], errors='coerce')
+                         
+                     now = pd.Timestamp.now()
+                     # Changes closed in last 4 hours
+                     limit_time = now - pd.Timedelta(hours=4)
+                     recent_changes = changes_df[
+                         (changes_df['closed_at'] >= limit_time) &
+                         (changes_df['closed_at'] <= now + pd.Timedelta(minutes=10)) # Slush
+                     ]
+                     
+                     if not recent_changes.empty:
+                         st.error(f"Found {len(recent_changes)} Recent Changes")
+                         st.dataframe(recent_changes[['number', 'short_description', 'closed_at']].head(5), hide_index=True)
+                     else:
+                         st.success("No changes in last 4 hours")
+                 else:
+                     st.warning("Change data missing 'closed_at'")
+            else:
+                 st.info("No changes loaded.")
+
+        st.divider()
+        
+        # 4. Crisis Memory
+        st.subheader("🧠 Crisis Memory: Historical Fixes")
+        
+        # Build condensed search query from top cluster (shorter = better for TF-IDF similarity)
+        def _condense_cluster_query(descriptions):
+            """Extract key phrases (e.g. after ' : ') and join uniquely for a readable, search-effective query."""
+            seen = set()
+            parts = []
+            for desc in descriptions[:3]:
+                s = str(desc).strip()
+                if not s:
+                    continue
+                # Many alerts use "identifier : error_type" - extract the error_type for search
+                if " : " in s:
+                    s = s.split(" : ", 1)[1].strip()
+                elif ": " in s:
+                    s = s.split(": ", 1)[1].strip()
+                if s and s not in seen:
+                    seen.add(s)
+                    parts.append(s)
+            return " ".join(parts) if parts else ""
+        
+        query_text = ""
+        cluster_info = "Manual Entry"
+        if not df_cleaned.empty:
+             open_clusters = cluster_open_incidents(df_cleaned)
+             if not open_clusters.empty and 'Cluster_ID' in open_clusters.columns:
+                 valid = open_clusters[open_clusters['Cluster_ID'] != -1]
+                 if not valid.empty:
+                     top_id = valid['Cluster_ID'].value_counts().idxmax()
+                     top_cluster = valid[valid['Cluster_ID'] == top_id]
+                     descs = top_cluster['short_description'].head(3).astype(str).tolist()
+                     query_text = _condense_cluster_query(descs)
+                     if not query_text:
+                         query_text = descs[0] if descs else ""  # fallback to first full description
+                     cluster_info = f"Cluster {top_id} (Size: {len(top_cluster)})"
+
+        search_query = st.text_input(f"Search Query ({cluster_info})", value=query_text if query_text else "Service Outage", 
+                                      placeholder="e.g. ABAP IDoc errors")
+        
+        if st.button("Search Historical P1s", key='war_room_search'):
+            with st.spinner("Searching Crisis Memory..."):
+                matches = find_similar_p1_resolutions(search_query, df_cleaned)
+                if matches:
+                    st.success(f"Found {len(matches)} Relevant P1 Records")
+                    for m in matches:
+                        with st.expander(f"📌 {m['number']}: {m['short_description']} (Match: {m['score']:.1%})", expanded=True):
+                            st.write("**Resolution Notes:**")
+                            st.code(m['close_notes'])
+                else:
+                    st.warning("No relevant historical P1s found.")
+        
+        st.caption("Detailed dashboard disabled in War Room mode.")
+        st.stop()
+
     # --- Tabs Layout ---
-    tab_risks, tab_dive, tab_intelligence = st.tabs(["🔴 Current Risks", "🔍 Investigation Deck", "🧠 AI Intelligence"])
+    tab_risks, tab_dive, tab_intelligence, tab_retro = st.tabs([
+        "🔴 Current Risks", "🔍 Investigation Deck", "🧠 AI Intelligence", "⏪ Retro Audit"
+    ])
 
     # ==========================
     # TAB 1: Current Risks
@@ -247,10 +447,31 @@ def main():
             if not open_clusters.empty and not changes_df.empty:
                 matches = correlate_cluster_causes(open_clusters, changes_df)
                 if matches:
-                    st.error(f"Found {len(matches)} Suspect Changes!")
+                    # Group matches by cluster for better organization
+                    from collections import defaultdict
+                    grouped = defaultdict(list)
                     for m in matches:
-                        st.markdown(f"**Cluster {m['Cluster_ID']}** linked to **{m['Suspect_Change']}**")
-                        st.caption(f"Reason: {m['Matched_Keywords']}")
+                        grouped[m['Cluster_ID']].append(m)
+                    
+                    # Show summary metrics
+                    st.error(f"🔍 Found {len(matches)} Suspect Changes!")
+                    st.caption(f"**{len(grouped)} clusters** linked to recent changes")
+                    
+                    # Display grouped by cluster (show top 5 clusters)
+                    sorted_clusters = sorted(grouped.items(), key=lambda x: len(x[1]), reverse=True)
+                    
+                    for cluster_id, cluster_matches in sorted_clusters[:5]:
+                        with st.expander(
+                            f"Cluster {cluster_id} ({len(cluster_matches)} changes)",
+                            expanded=(len(cluster_matches) > 3)  # Auto-expand if many changes
+                        ):
+                            for m in cluster_matches:
+                                st.markdown(f"→ **{m['Suspect_Change']}**")
+                                st.caption(f"Reason: {m['Matched_Keywords']}")
+                    
+                    # Show remaining count
+                    if len(grouped) > 5:
+                        st.caption(f"_... and {len(grouped) - 5} more clusters_")
                 else:
                     st.success("No correlation with recent changes.")
             else:
@@ -382,6 +603,7 @@ def main():
                                 st.info(f"💡 **Time Savings Potential:** Using these similar incidents could save ~{improvement['estimated_time_savings_hours']:.1f} hours (30% of avg {improvement['avg_historical_resolution_hours']:.1f}h)")
                         else:
                             st.warning("No similar resolved incidents found.")
+                            st.caption("Cluster mates may still be open, or resolved incidents may lack resolution notes. Similar Incident search only shows *closed* incidents with *close_notes*.")
         else:
             st.warning("No incident data loaded.")
 
@@ -452,7 +674,17 @@ def main():
         st.write("Automatically suggest Problem Records for recurring incident patterns.")
 
         if not df_cleaned.empty:
-            threshold = st.slider("Minimum incidents to trigger Problem creation:", 3, 10, 5, key='problem_threshold')
+            col_btn1, col_btn2 = st.columns([3, 1])
+            
+            with col_btn1:
+                threshold = st.slider("Minimum incidents to trigger Problem creation:", 3, 10, 5, key='problem_threshold')
+            
+            with col_btn2:
+                if 'problem_suggestions' in st.session_state and st.session_state['problem_suggestions'] is not None:
+                    if st.button("🔄 Clear Results", key='clear_problems'):
+                        st.session_state.pop('problem_suggestions', None)
+                        st.session_state.pop('last_threshold', None)
+                        st.rerun()
 
             if st.button("Analyze Clusters for Problem Opportunities", key='detect_problems'):
                 with st.spinner("Analyzing incident patterns..."):
@@ -462,63 +694,73 @@ def main():
                     if 'Cluster_ID' in df_clustered.columns:
                         # Get problem suggestions
                         problem_suggestions = batch_suggest_problems(df_clustered, threshold=threshold)
+                        
+                        # Store in session state for persistence across reruns
+                        st.session_state['problem_suggestions'] = problem_suggestions
+                        st.session_state['last_threshold'] = threshold  # Use different key to avoid widget conflict
+                    else:
+                        st.session_state['problem_suggestions'] = None
 
-                        if problem_suggestions:
-                            st.success(f"🔥 Found {len(problem_suggestions)} cluster(s) that should have Problem Records!")
+            # Display problem suggestions if they exist in session state
+            if 'problem_suggestions' in st.session_state and st.session_state['problem_suggestions']:
+                problem_suggestions = st.session_state['problem_suggestions']
+                
+                if problem_suggestions:
+                    st.success(f"🔥 Found {len(problem_suggestions)} cluster(s) that should have Problem Records!")
 
-                            for i, suggestion in enumerate(problem_suggestions):
-                                with st.expander(f"📋 Problem Suggestion {i+1}: {suggestion['problem_title']}", expanded=(i==0)):
-                                    col1, col2, col3 = st.columns(3)
+                    for i, suggestion in enumerate(problem_suggestions):
+                        with st.expander(f"📋 Problem Suggestion {i+1}: {suggestion['problem_title']}", expanded=(i==0)):
+                            col1, col2, col3 = st.columns(3)
 
-                                    with col1:
-                                        st.metric("Incident Count", suggestion['incident_count'])
-                                    with col2:
-                                        st.metric("Time Span", f"{suggestion['time_span_days']} days")
-                                    with col3:
-                                        st.metric("Priority", suggestion['priority'])
+                            with col1:
+                                st.metric("Incident Count", suggestion['incident_count'])
+                            with col2:
+                                st.metric("Time Span", f"{suggestion['time_span_days']} days")
+                            with col3:
+                                st.metric("Priority", suggestion['priority'])
 
-                                    st.markdown(f"**Cluster ID:** {suggestion['cluster_id']}")
-                                    st.markdown(f"**Recommended Assignment:** {suggestion['assignment_group']}")
-                                    st.markdown(f"**Business Impact:** {suggestion['business_impact']}")
+                            st.markdown(f"**Cluster ID:** {suggestion['cluster_id']}")
+                            st.markdown(f"**Recommended Assignment:** {suggestion['assignment_group']}")
+                            st.markdown(f"**Business Impact:** {suggestion['business_impact']}")
 
-                                    if suggestion.get('affected_assets'):
-                                        st.markdown(f"**Affected Assets:** {', '.join(suggestion['affected_assets'][:5])}")
+                            if suggestion.get('affected_assets'):
+                                st.markdown(f"**Affected Assets:** {', '.join(suggestion['affected_assets'][:5])}")
 
-                                    # Display all incidents with smart formatting
-                                    incident_count = len(suggestion['related_incidents'])
-                                    st.markdown(f"**Related Incidents ({incident_count}):**")
+                            # Display all incidents with smart formatting
+                            incident_count = len(suggestion['related_incidents'])
+                            st.markdown(f"**Related Incidents ({incident_count}):**")
 
-                                    if incident_count <= 20:
-                                        # Show all incidents inline for small lists
-                                        st.code(', '.join(suggestion['related_incidents']), language='text')
-                                    else:
-                                        # For large lists, show in scrollable code block with newlines for readability
-                                        incident_list = '\n'.join([
-                                            ', '.join(suggestion['related_incidents'][i:i+10])
-                                            for i in range(0, incident_count, 10)
-                                        ])
-                                        st.code(incident_list, language='text')
-                                        st.caption(f"Displaying all {incident_count} incidents (grouped by 10 per line)")
+                            if incident_count <= 20:
+                                # Show all incidents inline for small lists
+                                st.code(', '.join(suggestion['related_incidents']), language='text')
+                            else:
+                                # For large lists, show in scrollable code block with newlines for readability
+                                incident_list = '\n'.join([
+                                    ', '.join(suggestion['related_incidents'][i:i+10])
+                                    for i in range(0, incident_count, 10)
+                                ])
+                                st.code(incident_list, language='text')
+                                st.caption(f"Displaying all {incident_count} incidents (grouped by 10 per line)")
 
-                                    st.markdown("**Recommended Actions:**")
-                                    for action in suggestion['recommended_actions']:
-                                        st.markdown(f"- {action}")
+                            st.markdown("**Recommended Actions:**")
+                            for action in suggestion['recommended_actions']:
+                                st.markdown(f"- {action}")
 
-                                    if st.button(f"Create Problem Record (Draft)", key=f'create_prb_{i}'):
-                                        st.info("🚀 In production, this would create a ServiceNow Problem Record")
+                            if st.button(f"Create Problem Record (Draft)", key=f'create_prb_{i}'):
+                                st.info("🚀 In production, this would create a ServiceNow Problem Record")
 
-                                        # Format incident list for readability in template
-                                        incident_count = len(suggestion['related_incidents'])
-                                        if incident_count <= 50:
-                                            incidents_formatted = ', '.join(suggestion['related_incidents'])
-                                        else:
-                                            # For very large lists, group by 10 per line
-                                            incidents_formatted = '\n'.join([
-                                                ', '.join(suggestion['related_incidents'][i:i+10])
-                                                for i in range(0, incident_count, 10)
-                                            ])
+                                # Format incident list for readability in template
+                                incident_count = len(suggestion['related_incidents'])
+                                if incident_count <= 50:
+                                    incidents_formatted = ', '.join(suggestion['related_incidents'])
+                                else:
+                                    # For very large lists, group by 10 per line
+                                    incidents_formatted = '\n'.join([
+                                        ', '.join(suggestion['related_incidents'][i:i+10])
+                                        for i in range(0, incident_count, 10)
+                                    ])
 
-                                        st.code(f"""
+                                st.code(f"""
 Problem Record Details:
 ━━━━━━━━━━━━━━━━━━━━━━
 Title: {suggestion['problem_title']}
@@ -534,13 +776,13 @@ Related Incidents ({incident_count}):
 {incidents_formatted}
 
 Keywords: {', '.join(suggestion['top_keywords'])}
-                                        """, language='text')
+                                """, language='text')
 
-                            st.success("💰 **Business Impact:** Proactive problem management prevents ~20 repeat incidents/month, saving $50K+/year")
-                        else:
-                            st.info(f"No clusters found with >= {threshold} incidents. Try lowering the threshold.")
-                    else:
-                        st.error("Clustering failed. Please check your data.")
+                    st.success("💰 **Business Impact:** Proactive problem management prevents ~20 repeat incidents/month, saving $50K+/year")
+                else:
+                    st.info(f"No clusters found with >= {st.session_state.get('last_threshold', threshold)} incidents. Try lowering the threshold.")
+            elif 'problem_suggestions' in st.session_state and st.session_state['problem_suggestions'] is None:
+                st.error("Clustering failed. Please check your data.")
         else:
             st.warning("No incident data loaded.")
 
@@ -591,51 +833,54 @@ Deflection Potential: {deflect_val} tickets
             # 4. Display this in a st.code block
             st.code(template, language='text')
 
-    # --- Phase 5: Retro Audit (Back to the Future) ---
-    st.header("Phase 5: Retro Audit (Back to the Future)")
-    
-    tab_audit, tab_zombies, tab_deflection = st.tabs(["The Timeline Fusion", "Zombie Problems", "Deflection Opportunity"])
-    
-    with tab_audit:
-        st.subheader("The Timeline Fusion")
-        st.write("Visualizing the relationship between Incidents (Blue) and Problem Records (Red).")
+    # ==========================
+    # TAB 4: Retro Audit
+    # ==========================
+    with tab_retro:
+        st.header("⏪ Retro Audit (Back to the Future)")
         
-        if not df_cleaned.empty and not problems_df.empty:
-            fig = create_timeline_fusion_chart(df_cleaned, problems_df)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Insufficient data for Timeline Fusion. Ensure both Incidents and Problems are loaded.")
-
-    with tab_zombies:
-        st.subheader("Recursion Table: Zombie Problems")
-        st.write("Entities with >1 Problem Record in the last 12 months.")
+        tab_audit, tab_zombies, tab_deflection = st.tabs(["The Timeline Fusion", "Zombie Problems", "Deflection Opportunity"])
         
-        if not problems_df.empty:
-            zombies = identify_zombie_problems(problems_df)
-            if not zombies.empty:
-                st.warning(f"Found {len(zombies)} Zombie Entities!")
-                st.dataframe(zombies, use_container_width=True)
+        with tab_audit:
+            st.subheader("The Timeline Fusion")
+            st.write("Visualizing the relationship between Incidents (Blue) and Problem Records (Red).")
+            
+            if not df_cleaned.empty and not problems_df.empty:
+                fig = create_timeline_fusion_chart(df_cleaned, problems_df)
+                st.plotly_chart(fig, use_container_width=True)
             else:
-                st.success("No Zombie Problems detected (Entities with multiple Problem records).")
-        else:
-            st.warning("No Problem data loaded.")
+                st.info("Insufficient data for Timeline Fusion. Ensure both Incidents and Problems are loaded.")
+
+        with tab_zombies:
+            st.subheader("Recursion Table: Zombie Problems")
+            st.write("Entities with >1 Problem Record in the last 12 months.")
             
-    with tab_deflection:
-        st.subheader("Deflection Opportunity")
-        st.write("Potential cost savings from automating keyword-matched incidents.")
-        
-        if not df_cleaned.empty:
-            deflect_count, savings, deflect_df = calculate_deflection_opportunity(df_cleaned)
+            if not problems_df.empty:
+                zombies = identify_zombie_problems(problems_df)
+                if not zombies.empty:
+                    st.warning(f"Found {len(zombies)} Zombie Entities!")
+                    st.dataframe(zombies, use_container_width=True)
+                else:
+                    st.success("No Zombie Problems detected (Entities with multiple Problem records).")
+            else:
+                st.warning("No Problem data loaded.")
+                
+        with tab_deflection:
+            st.subheader("Deflection Opportunity")
+            st.write("Potential cost savings from automating keyword-matched incidents.")
             
-            col1, col2 = st.columns(2)
-            col1.metric("Deflectable Tickets", deflect_count)
-            col2.metric("Potential Savings", f"${savings:,}")
-            
-            if not deflect_df.empty:
-                with st.expander("View Deflectable Candidates"):
-                    st.dataframe(deflect_df)
-        else:
-            st.warning("No Incident data loaded.")
+            if not df_cleaned.empty:
+                deflect_count, savings, deflect_df = calculate_deflection_opportunity(df_cleaned)
+                
+                col1, col2 = st.columns(2)
+                col1.metric("Deflectable Tickets", deflect_count)
+                col2.metric("Potential Savings", f"${savings:,}")
+                
+                if not deflect_df.empty:
+                    with st.expander("View Deflectable Candidates"):
+                        st.dataframe(deflect_df)
+            else:
+                st.warning("No Incident data loaded.")
 
 if __name__ == "__main__":
     main()
