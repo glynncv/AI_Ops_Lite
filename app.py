@@ -548,10 +548,43 @@ def main():
             selected_mi = st.selectbox("Select Incident for Comm Draft", mi_list)
             if selected_mi:
                 row = df_cleaned[df_cleaned['number'] == selected_mi].iloc[0]
-                impact = st.text_area("Impact Details")
+                impact = st.text_area("Impact Details", placeholder="e.g. 200+ users unable to access DNS. Email and file shares impacted.")
                 if st.button("Generate Template"):
+                    # Enrich with cluster context
+                    cluster_info = None
+                    try:
+                        open_clusters = cluster_open_incidents(df_cleaned)
+                        if not open_clusters.empty and 'Cluster_ID' in open_clusters.columns:
+                            mi_in_cluster = open_clusters[open_clusters['number'] == selected_mi]
+                            if not mi_in_cluster.empty:
+                                cid = mi_in_cluster['Cluster_ID'].iloc[0]
+                                if cid != -1:
+                                    cluster_rows = open_clusters[open_clusters['Cluster_ID'] == cid]
+                                    cluster_info = {
+                                        'cluster_id': cid,
+                                        'size': len(cluster_rows),
+                                        'related_incidents': cluster_rows['number'].tolist()
+                                    }
+                    except Exception:
+                        pass
+                    # Suspect changes (48h lookback)
+                    suspect_changes = []
+                    if not changes_df.empty:
+                        try:
+                            suspect_changes = find_suspect_changes(row, changes_df, lookback_hours=48)
+                        except Exception:
+                            pass
                     tmpl = generate_communication_template(
-                        selected_mi, row.get('short_description'), row.get('state'), row.get('assignment_group'), impact
+                        selected_mi,
+                        row.get('short_description'),
+                        row.get('state'),
+                        row.get('assignment_group'),
+                        impact,
+                        priority=row.get('priority'),
+                        opened_at=row.get('opened_at'),
+                        description_snippet=row.get('description'),
+                        cluster_info=cluster_info,
+                        suspect_changes=suspect_changes
                     )
                     st.code(tmpl)
 
