@@ -12,6 +12,13 @@ class DataLoader:
         full_pattern = os.path.join(self.data_dir, pattern)
         return glob.glob(full_pattern)
 
+    @staticmethod
+    def _map_location(df):
+        """Map location.u_site_name to location (ServiceNow export format)."""
+        if 'location.u_site_name' in df.columns and 'location' not in df.columns:
+            df['location'] = df['location.u_site_name'].fillna('')
+        return df
+
     def _read_csv(self, file_path_or_buffer):
         """Helper to read CSV with encoding fallback."""
         encodings = ['utf-8', 'cp1252', 'latin1']
@@ -74,10 +81,8 @@ class DataLoader:
         if 'incident_state' in df.columns and 'state' not in df.columns:
             df['state'] = df['incident_state']
         
-        # Map location.u_site_name to location (ServiceNow export format)
-        if 'location.u_site_name' in df.columns and 'location' not in df.columns:
-            df['location'] = df['location.u_site_name'].fillna('')
-        
+        self._map_location(df)
+
         return df
 
     def load_changes(self, uploaded_file=None):
@@ -183,8 +188,6 @@ class DataLoader:
             else:
                 df[col] = df[col].fillna('')
         
-        # Map location.u_site_name to location (ServiceNow export format)
-        if 'location.u_site_name' in df.columns and 'location' not in df.columns:
-            df['location'] = df['location.u_site_name'].fillna('')
-                
+        self._map_location(df)
+
         return df

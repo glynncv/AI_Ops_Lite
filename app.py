@@ -205,202 +205,202 @@ def main():
     # --- Phase 6: War Room Mode ---
     st.sidebar.markdown("---")
     war_room_mode = st.sidebar.toggle('🔴 Major Incident Mode', value=False)
-    
+
+    # --- Tabs Layout (War Room added as first tab when active) ---
     if war_room_mode:
-        st.markdown("""
-        <style>
-        .war-room-header {
-            color: #d32f2f;
-            font-size: 3em;
-            font-weight: 800;
-            text-transform: uppercase;
-            border-bottom: 3px solid #d32f2f;
-            margin-bottom: 20px;
-            animation: pulse 2s infinite;
-        }
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.6; }
-            100% { opacity: 1; }
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        st.markdown('<div class="war-room-header">🚨 WAR ROOM: MAJOR INCIDENT ACTIVE</div>', unsafe_allow_html=True)
-        
-        # --- Active Major Incidents Section ---
-        if not df_cleaned.empty:
-            # Filter for Open Incidents
-            open_mask = ~df_cleaned['state'].isin(['Closed', 'Resolved', 'Canceled', 'Cancelled'])
-            active_incidents = df_cleaned[open_mask].copy()
-            
-            # Filter for Priority 1/2 if priority column exists, otherwise show all open
-            if not active_incidents.empty:
-                mis = pd.DataFrame()
-                
-                if 'priority' in active_incidents.columns:
-                    # Check if priority column has actual values (not all null/empty)
-                    has_priority_data = active_incidents['priority'].notna().any()
-                    
-                    if has_priority_data:
-                        # Filter for P1/P2 - match priorities that START with "1" or "2"
-                        # This catches: "1", "1 - Critical", "2", "2 - High", etc.
-                        # But NOT: "4 - Low" even if description contains "critical"
-                        mis = active_incidents[
-                            active_incidents['priority'].astype(str).str.match(r'^[12](\s|-|$)', na=False)
-                        ]
+        tab_war_room, tab_risks, tab_dive, tab_intelligence, tab_retro = st.tabs([
+            "🚨 War Room", "🔴 Current Risks", "🔍 Investigation Deck", "🧠 AI Intelligence", "⏪ Retro Audit"
+        ])
+    else:
+        tab_risks, tab_dive, tab_intelligence, tab_retro = st.tabs([
+            "🔴 Current Risks", "🔍 Investigation Deck", "🧠 AI Intelligence", "⏪ Retro Audit"
+        ])
+
+    # ==========================
+    # WAR ROOM TAB (only when active)
+    # ==========================
+    if war_room_mode:
+        with tab_war_room:
+            st.markdown("""
+            <style>
+            .war-room-header {
+                color: #d32f2f;
+                font-size: 3em;
+                font-weight: 800;
+                text-transform: uppercase;
+                border-bottom: 3px solid #d32f2f;
+                margin-bottom: 20px;
+                animation: pulse 2s 3;
+            }
+            @keyframes pulse {
+                0% { opacity: 1; }
+                50% { opacity: 0.6; }
+                100% { opacity: 1; }
+            }
+            </style>
+            """, unsafe_allow_html=True)
+            st.markdown('<div class="war-room-header">🚨 WAR ROOM: MAJOR INCIDENT ACTIVE</div>', unsafe_allow_html=True)
+
+            # --- Active Major Incidents Section ---
+            if not df_cleaned.empty:
+                # Filter for Open Incidents
+                open_mask = ~df_cleaned['state'].isin(['Closed', 'Resolved', 'Canceled', 'Cancelled'])
+                active_incidents = df_cleaned[open_mask].copy()
+
+                # Filter for Priority 1/2 if priority column exists, otherwise show all open
+                if not active_incidents.empty:
+                    mis = pd.DataFrame()
+
+                    if 'priority' in active_incidents.columns:
+                        # Check if priority column has actual values (not all null/empty)
+                        has_priority_data = active_incidents['priority'].notna().any()
+
+                        if has_priority_data:
+                            # Filter for P1/P2 - match priorities that START with "1" or "2"
+                            mis = active_incidents[
+                                active_incidents['priority'].astype(str).str.match(r'^[12](\s|-|$)', na=False)
+                            ]
+                        else:
+                            st.info("📋 Priority field is empty — using keyword search. Ensure ServiceNow returns priority values.")
+                            mis = active_incidents[
+                                active_incidents['short_description'].str.contains('Critical|Outage|Urgent|P1|P2', case=False, na=False)
+                            ].head(5)
                     else:
-                        # Priority column exists but has no data - fall back to keyword search
-                        st.info("📋 Priority field is empty — using keyword search. Ensure ServiceNow returns priority values.")
+                        st.info("📋 Using keyword search (Critical/Outage/Urgent/P1/P2) — add a *priority* column to your data for accurate P1/P2 filtering.")
                         mis = active_incidents[
                             active_incidents['short_description'].str.contains('Critical|Outage|Urgent|P1|P2', case=False, na=False)
                         ].head(5)
-                else:
-                    # No priority column - fall back to keyword search (e.g. Offline CSV or Mock data)
-                    st.info("📋 Using keyword search (Critical/Outage/Urgent/P1/P2) — add a *priority* column to your data for accurate P1/P2 filtering.")
-                    mis = active_incidents[
-                        active_incidents['short_description'].str.contains('Critical|Outage|Urgent|P1|P2', case=False, na=False)
-                    ].head(5)
-                
-                # If we found Major Incidents, display them prominently
-                if not mis.empty:
-                    st.error(f"⚠️ {len(mis)} MAJOR INCIDENT(S) IN PROGRESS")
-                    
-                    # Include priority column if it exists
-                    display_cols = ['number', 'short_description', 'assignment_group', 'state', 'opened_at']
-                    if 'priority' in mis.columns:
-                        display_cols.insert(1, 'priority')
-                    
-                    st.dataframe(
-                        mis[display_cols],
-                        use_container_width=True,
-                        hide_index=True
-                    )
-                else:
-                     st.info("No Active Priority 1/2 Incidents detected in data.")
-            else:
-                 st.success("No Active Incidents.")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        # 1. Velocity Meter
-        with col1:
-            st.subheader("🔥 Velocity Meter")
-            velocity = 0.0
-            if not df_cleaned.empty:
-                # Ensure datetime
-                if not pd.api.types.is_datetime64_any_dtype(df_cleaned['opened_at']):
-                    df_cleaned['opened_at'] = pd.to_datetime(df_cleaned['opened_at'], errors='coerce')
-                
-                now = pd.Timestamp.now(tz='UTC')
-                # Ensure opened_at is tz-aware (UTC) for safe comparison
-                if df_cleaned['opened_at'].dt.tz is None:
-                    df_cleaned['opened_at'] = df_cleaned['opened_at'].dt.tz_localize('UTC')
-                # 30 min window for calculation
-                limit_time = now - pd.Timedelta(minutes=30)
-                recent = df_cleaned[df_cleaned['opened_at'] >= limit_time]
-                velocity = len(recent) / 30.0
-            
-            st.metric("Incidents / Min", f"{velocity:.2f}", delta="Last 30 mins", delta_color="inverse")
-            
-        # 2. Blast Radius
-        with col2:
-            st.subheader("🌍 Blast Radius (Locations)")
-            if not df_cleaned.empty and 'location' in df_cleaned.columns:
-                affected_locs = df_cleaned['location'].value_counts().head(5)
-                st.dataframe(affected_locs.rename("Ticket Count"), width=300)
-            else:
-                st.info("No location data available.")
 
-        # 3. Change Radar
-        with col3:
-            st.subheader("📡 Change Radar")
-            if not changes_df.empty:
-                 if 'closed_at' in changes_df.columns:
-                     if not pd.api.types.is_datetime64_any_dtype(changes_df['closed_at']):
-                         changes_df['closed_at'] = pd.to_datetime(changes_df['closed_at'], errors='coerce')
-                         
-                     now = pd.Timestamp.now(tz='UTC')
-                     # Ensure closed_at is tz-aware (UTC) for safe comparison
-                     if changes_df['closed_at'].dt.tz is None:
-                         changes_df['closed_at'] = changes_df['closed_at'].dt.tz_localize('UTC')
-                     # Changes closed in last 4 hours
-                     limit_time = now - pd.Timedelta(hours=4)
-                     recent_changes = changes_df[
-                         (changes_df['closed_at'] >= limit_time) &
-                         (changes_df['closed_at'] <= now + pd.Timedelta(minutes=10)) # Buffer for clock skew
-                     ]
-                     
-                     if not recent_changes.empty:
-                         st.error(f"Found {len(recent_changes)} Recent Changes")
-                         st.dataframe(recent_changes[['number', 'short_description', 'closed_at']].head(5), hide_index=True)
+                    # If we found Major Incidents, display them prominently
+                    if not mis.empty:
+                        st.error(f"⚠️ {len(mis)} MAJOR INCIDENT(S) IN PROGRESS")
+
+                        display_cols = ['number', 'short_description', 'assignment_group', 'state', 'opened_at']
+                        if 'priority' in mis.columns:
+                            display_cols.insert(1, 'priority')
+
+                        st.dataframe(
+                            mis[display_cols],
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                    else:
+                         st.info("No Active Priority 1/2 Incidents detected in data.")
+                else:
+                     st.success("No Active Incidents.")
+
+            col1, col2, col3 = st.columns(3)
+
+            # 1. Velocity Meter
+            with col1:
+                st.subheader("🔥 Velocity Meter")
+                velocity = 0.0
+                if not df_cleaned.empty:
+                    # Ensure datetime
+                    if not pd.api.types.is_datetime64_any_dtype(df_cleaned['opened_at']):
+                        df_cleaned['opened_at'] = pd.to_datetime(df_cleaned['opened_at'], errors='coerce')
+
+                    now = pd.Timestamp.now(tz='UTC')
+                    # Ensure opened_at is tz-aware (UTC) for safe comparison
+                    if df_cleaned['opened_at'].dt.tz is None:
+                        df_cleaned['opened_at'] = df_cleaned['opened_at'].dt.tz_localize('UTC')
+                    # 30 min window for calculation
+                    limit_time = now - pd.Timedelta(minutes=30)
+                    recent = df_cleaned[df_cleaned['opened_at'] >= limit_time]
+                    velocity = len(recent) / 30.0
+
+                st.metric("Incidents / Min", f"{velocity:.2f}", delta="Last 30 mins", delta_color="inverse")
+
+            # 2. Blast Radius
+            with col2:
+                st.subheader("🌍 Blast Radius (Locations)")
+                if not df_cleaned.empty and 'location' in df_cleaned.columns:
+                    affected_locs = df_cleaned['location'].value_counts().head(5)
+                    st.dataframe(affected_locs.rename("Ticket Count"), width=300)
+                else:
+                    st.info("No location data available.")
+
+            # 3. Change Radar
+            with col3:
+                st.subheader("📡 Change Radar")
+                if not changes_df.empty:
+                     if 'closed_at' in changes_df.columns:
+                         if not pd.api.types.is_datetime64_any_dtype(changes_df['closed_at']):
+                             changes_df['closed_at'] = pd.to_datetime(changes_df['closed_at'], errors='coerce')
+
+                         now = pd.Timestamp.now(tz='UTC')
+                         # Ensure closed_at is tz-aware (UTC) for safe comparison
+                         if changes_df['closed_at'].dt.tz is None:
+                             changes_df['closed_at'] = changes_df['closed_at'].dt.tz_localize('UTC')
+                         # Changes closed in last 4 hours
+                         limit_time = now - pd.Timedelta(hours=4)
+                         recent_changes = changes_df[
+                             (changes_df['closed_at'] >= limit_time) &
+                             (changes_df['closed_at'] <= now + pd.Timedelta(minutes=10)) # Buffer for clock skew
+                         ]
+
+                         if not recent_changes.empty:
+                             st.error(f"Found {len(recent_changes)} Recent Changes")
+                             st.dataframe(recent_changes[['number', 'short_description', 'closed_at']].head(5), hide_index=True)
+                         else:
+                             st.success("No changes in last 4 hours")
                      else:
-                         st.success("No changes in last 4 hours")
-                 else:
-                     st.warning("Change data missing 'closed_at'")
-            else:
-                 st.info("No changes loaded.")
-
-        st.divider()
-        
-        # 4. Crisis Memory
-        st.subheader("🧠 Crisis Memory: Historical Fixes")
-        
-        # Build condensed search query from top cluster (shorter = better for TF-IDF similarity)
-        def _condense_cluster_query(descriptions):
-            """Extract key phrases (e.g. after ' : ') and join uniquely for a readable, search-effective query."""
-            seen = set()
-            parts = []
-            for desc in descriptions[:3]:
-                s = str(desc).strip()
-                if not s:
-                    continue
-                # Many alerts use "identifier : error_type" - extract the error_type for search
-                if " : " in s:
-                    s = s.split(" : ", 1)[1].strip()
-                elif ": " in s:
-                    s = s.split(": ", 1)[1].strip()
-                if s and s not in seen:
-                    seen.add(s)
-                    parts.append(s)
-            return " ".join(parts) if parts else ""
-        
-        query_text = ""
-        cluster_info = "Manual Entry"
-        if not df_cleaned.empty:
-             open_clusters = cluster_open_incidents(df_cleaned)
-             if not open_clusters.empty and 'Cluster_ID' in open_clusters.columns:
-                 valid = open_clusters[open_clusters['Cluster_ID'] != -1]
-                 if not valid.empty:
-                     top_id = valid['Cluster_ID'].value_counts().idxmax()
-                     top_cluster = valid[valid['Cluster_ID'] == top_id]
-                     descs = top_cluster['short_description'].head(3).astype(str).tolist()
-                     query_text = _condense_cluster_query(descs)
-                     if not query_text:
-                         query_text = descs[0] if descs else ""  # fallback to first full description
-                     cluster_info = f"Cluster {top_id} (Size: {len(top_cluster)})"
-
-        search_query = st.text_input(f"Search Query ({cluster_info})", value=query_text if query_text else "Service Outage", 
-                                      placeholder="e.g. ABAP IDoc errors")
-        
-        if st.button("Search Historical P1s", key='war_room_search'):
-            with st.spinner("Searching Crisis Memory..."):
-                matches = find_similar_p1_resolutions(search_query, df_cleaned)
-                if matches:
-                    st.success(f"Found {len(matches)} Relevant P1 Records")
-                    for m in matches:
-                        with st.expander(f"📌 {m['number']}: {m['short_description']} (Match: {m['score']:.1%})", expanded=True):
-                            st.write("**Resolution Notes:**")
-                            st.code(m['close_notes'])
+                         st.warning("Change data missing 'closed_at'")
                 else:
-                    st.warning("No relevant historical P1s found.")
-        
-        st.caption("Detailed dashboard disabled in War Room mode.")
-        st.stop()
+                     st.info("No changes loaded.")
 
-    # --- Tabs Layout ---
-    tab_risks, tab_dive, tab_intelligence, tab_retro = st.tabs([
-        "🔴 Current Risks", "🔍 Investigation Deck", "🧠 AI Intelligence", "⏪ Retro Audit"
-    ])
+            st.divider()
+
+            # 4. Crisis Memory
+            st.subheader("🧠 Crisis Memory: Historical Fixes")
+
+            # Build condensed search query from top cluster (shorter = better for TF-IDF similarity)
+            def _condense_cluster_query(descriptions):
+                """Extract key phrases (e.g. after ' : ') and join uniquely for a readable, search-effective query."""
+                seen = set()
+                parts = []
+                for desc in descriptions[:3]:
+                    s = str(desc).strip()
+                    if not s:
+                        continue
+                    if " : " in s:
+                        s = s.split(" : ", 1)[1].strip()
+                    elif ": " in s:
+                        s = s.split(": ", 1)[1].strip()
+                    if s and s not in seen:
+                        seen.add(s)
+                        parts.append(s)
+                return " ".join(parts) if parts else ""
+
+            query_text = ""
+            cluster_info = "Manual Entry"
+            if not df_cleaned.empty:
+                 open_clusters = cluster_open_incidents(df_cleaned)
+                 if not open_clusters.empty and 'Cluster_ID' in open_clusters.columns:
+                     valid = open_clusters[open_clusters['Cluster_ID'] != -1]
+                     if not valid.empty:
+                         top_id = valid['Cluster_ID'].value_counts().idxmax()
+                         top_cluster = valid[valid['Cluster_ID'] == top_id]
+                         descs = top_cluster['short_description'].head(3).astype(str).tolist()
+                         query_text = _condense_cluster_query(descs)
+                         if not query_text:
+                             query_text = descs[0] if descs else ""
+                         cluster_info = f"Cluster {top_id} (Size: {len(top_cluster)})"
+
+            search_query = st.text_input(f"Search Query ({cluster_info})", value=query_text if query_text else "Service Outage",
+                                          placeholder="e.g. ABAP IDoc errors")
+
+            if st.button("Search Historical P1s", key='war_room_search'):
+                with st.spinner("Searching Crisis Memory..."):
+                    matches = find_similar_p1_resolutions(search_query, df_cleaned)
+                    if matches:
+                        st.success(f"Found {len(matches)} Relevant P1 Records")
+                        for m in matches:
+                            with st.expander(f"📌 {m['number']}: {m['short_description']} (Match: {m['score']:.1%})", expanded=True):
+                                st.write("**Resolution Notes:**")
+                                st.code(m['close_notes'])
+                    else:
+                        st.warning("No relevant historical P1s found.")
 
     # ==========================
     # TAB 1: Current Risks
