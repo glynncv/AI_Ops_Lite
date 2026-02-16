@@ -291,7 +291,10 @@ def main():
                 if not pd.api.types.is_datetime64_any_dtype(df_cleaned['opened_at']):
                     df_cleaned['opened_at'] = pd.to_datetime(df_cleaned['opened_at'], errors='coerce')
                 
-                now = pd.Timestamp.now()
+                now = pd.Timestamp.now(tz='UTC')
+                # Ensure opened_at is tz-aware (UTC) for safe comparison
+                if df_cleaned['opened_at'].dt.tz is None:
+                    df_cleaned['opened_at'] = df_cleaned['opened_at'].dt.tz_localize('UTC')
                 # 30 min window for calculation
                 limit_time = now - pd.Timedelta(minutes=30)
                 recent = df_cleaned[df_cleaned['opened_at'] >= limit_time]
@@ -316,12 +319,15 @@ def main():
                      if not pd.api.types.is_datetime64_any_dtype(changes_df['closed_at']):
                          changes_df['closed_at'] = pd.to_datetime(changes_df['closed_at'], errors='coerce')
                          
-                     now = pd.Timestamp.now()
+                     now = pd.Timestamp.now(tz='UTC')
+                     # Ensure closed_at is tz-aware (UTC) for safe comparison
+                     if changes_df['closed_at'].dt.tz is None:
+                         changes_df['closed_at'] = changes_df['closed_at'].dt.tz_localize('UTC')
                      # Changes closed in last 4 hours
                      limit_time = now - pd.Timedelta(hours=4)
                      recent_changes = changes_df[
                          (changes_df['closed_at'] >= limit_time) &
-                         (changes_df['closed_at'] <= now + pd.Timedelta(minutes=10)) # Slush
+                         (changes_df['closed_at'] <= now + pd.Timedelta(minutes=10)) # Buffer for clock skew
                      ]
                      
                      if not recent_changes.empty:

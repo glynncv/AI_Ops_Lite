@@ -1,9 +1,12 @@
 import re
+import logging
 import pandas as pd
 from collections import defaultdict
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import DBSCAN
 from sklearn.metrics.pairwise import cosine_similarity
+
+logger = logging.getLogger(__name__)
 
 # Common words to exclude from entity extraction (noise in alert/incident descriptions)
 _ENTITY_STOP_WORDS = frozenset([
@@ -35,10 +38,6 @@ def _is_noise_entity(entity: str) -> bool:
     root = root.rstrip('-')
     if root in _ENTITY_STOP_WORDS:
         return True
-    # Also check leading stop word (e.g. "the-something-123")
-    for stop in _ENTITY_STOP_WORDS:
-        if len(stop) >= 2 and (root == stop or root.startswith(stop + '-') or root.startswith(stop + '_')):
-            return True
     return False
 
 def extract_entities(text):
@@ -424,8 +423,8 @@ def find_similar_p1_resolutions(current_text, df):
     if candidates.empty:
         # Fallback to P2 if no P1s found
         if 'priority' in df.columns:
-             candidates = df[
-                (df['state'].isin(['Closed', 'Resolved'])) & 
+            candidates = df[
+                (df['state'].isin(['Closed', 'Resolved'])) &
                 (df['priority'].astype(str).str.startswith('2'))
             ].copy()
     
@@ -467,4 +466,5 @@ def find_similar_p1_resolutions(current_text, df):
                 })
         return results
     except Exception as e:
+        logger.warning("Crisis Memory search failed: %s", e)
         return []

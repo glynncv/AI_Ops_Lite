@@ -23,7 +23,7 @@ def get_mock_data(table_name):
                 "state": "Closed",
                 "assignment_group": "Email Team",
                 "priority": "2 - High",
-                "location": ""
+                "location": "London - HQ"
             },
             {
                 "number": "INC001002",
@@ -34,7 +34,7 @@ def get_mock_data(table_name):
                 "state": "In Progress",
                 "assignment_group": "Network Team",
                 "priority": "3 - Moderate",
-                "location": ""
+                "location": "New York - DC1"
             },
             {
                 "number": "INC001003",
@@ -45,7 +45,7 @@ def get_mock_data(table_name):
                 "state": "New",
                 "assignment_group": "Hardware Team",
                 "priority": "4 - Low",
-                "location": ""
+                "location": "London - HQ"
             }
         ]
     elif table_name == 'problem':
